@@ -10,6 +10,6 @@
     "unlock-dialog"
   ],
   "settings-schema": "org.gnome.shell.extensions.screensavers",
-  "version-name": "0.2.0",
+  "version-name": "0.2.1",
   "url": "https://github.com/Yofuness/gnome-screensavers"
 }
