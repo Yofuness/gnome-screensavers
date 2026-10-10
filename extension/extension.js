@@ -20,6 +20,7 @@ export default class ScreensaversExtension extends Extension {
         this._settings = this.getSettings();
         this._sessionSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.session'});
         this.registry = new Registry(this, this._settings);
+        this._registryReady = this.registry.load().catch(e => this.log(`scanning savers: ${e}`));
         this._session = null;
         this._pendingFade = null;
         this._passFade = false;
@@ -93,6 +94,18 @@ export default class ScreensaversExtension extends Extension {
      * a key press or click.
      */
     startSaver({onLock = false, id = null} = {}) {
+        // Right after login the saver list may still be loading; start once it's ready.
+        if (!this.registry.loaded) {
+            if (!this._waitingForRegistry) {
+                this._waitingForRegistry = true;
+                this._registryReady.then(() => {
+                    this._waitingForRegistry = false;
+                    if (this.registry)
+                        this.startSaver({onLock, id});
+                });
+            }
+            return true;
+        }
         // Replace any running saver, but keep the fade GNOME just asked for.
         const pending = this._pendingFade;
         this._stopSession({resumeFade: false});

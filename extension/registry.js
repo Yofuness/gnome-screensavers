@@ -13,6 +13,11 @@ const OLD_FLURRY_PRESETS = {rainbow: 'rgb', mono: 'classic'};
 const HACK_DIRS = ['/usr/lib/xscreensaver', '/usr/libexec/xscreensaver', '/usr/lib64/xscreensaver'];
 const CONFIG_DIRS = ['/usr/share/xscreensaver/config'];
 
+Gio._promisify(Gio.File.prototype, 'load_contents_async');
+Gio._promisify(Gio.File.prototype, 'enumerate_children_async');
+Gio._promisify(Gio.File.prototype, 'query_info_async');
+Gio._promisify(Gio.FileEnumerator.prototype, 'next_files_async');
+
 function readText(path) {
     try {
         const [ok, bytes] = GLib.file_get_contents(path);
@@ -60,6 +65,67 @@ export class Registry {
         this._extension = extension;
         this._settings = settings;
         this._hacks = null;
+    }
+
+    get loaded() {
+        return this._hacks !== null;
+    }
+
+    /**
+     * Scan the installed hacks without blocking: the shell calls this once at
+     * enable() and waits for it before showing a saver.  (The preferences
+     * window, a separate process, uses the synchronous scan below.)
+     */
+    async load() {
+        if (this._hacks)
+            return;
+        const isDir = async path => {
+            try {
+                const info = await Gio.File.new_for_path(path).query_info_async(
+                    'standard::type', Gio.FileQueryInfoFlags.NONE, GLib.PRIORITY_LOW, null);
+                return info.get_file_type() === Gio.FileType.DIRECTORY;
+            } catch {
+                return false;
+            }
+        };
+        let hackDir = null;
+        for (const d of HACK_DIRS) {
+            if (await isDir(d)) {
+                hackDir = d;
+                break;
+            }
+        }
+        const hacks = [];
+        for (const configDir of hackDir ? CONFIG_DIRS : []) {
+            let names = [];
+            try {
+                const en = await Gio.File.new_for_path(configDir).enumerate_children_async(
+                    'standard::name', Gio.FileQueryInfoFlags.NONE, GLib.PRIORITY_LOW, null);
+                let batch;
+                while ((batch = await en.next_files_async(64, GLib.PRIORITY_LOW, null)).length)
+                    names.push(...batch.map(i => i.get_name()));
+            } catch {
+                names = [];
+            }
+            for (const file of names.filter(n => n.endsWith('.xml'))) {
+                try {
+                    const [bytes] = await Gio.File.new_for_path(`${configDir}/${file}`)
+                        .load_contents_async(null);
+                    const info = parseHackConfig(new TextDecoder('latin1').decode(bytes));
+                    if (!info?.name)
+                        continue;
+                    const exe = `${hackDir}/${info.name}`;
+                    const exeInfo = await Gio.File.new_for_path(exe).query_info_async(
+                        'access::can-execute', Gio.FileQueryInfoFlags.NONE, GLib.PRIORITY_LOW, null);
+                    if (exeInfo.get_attribute_boolean('access::can-execute'))
+                        hacks.push({...info, exe});
+                } catch {
+                    // unreadable config or missing program: skip it
+                }
+            }
+        }
+        hacks.sort((a, b) => a.label.localeCompare(b.label));
+        this._hacks = hacks;
     }
 
     _scanHacks() {

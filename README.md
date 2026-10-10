@@ -19,7 +19,7 @@ make install                  # installs to ~/.local/share/gnome-shell/extension
 ```
 
 Then **log out and back in**; Wayland can't load a new extension into a running session. Settings
-are in the Extensions app (or `gnome-extensions prefs screensavers@johann.local`).
+are in the Extensions app (or `gnome-extensions prefs screensavers@yofuness.github.io`).
 
 ## How it works
 

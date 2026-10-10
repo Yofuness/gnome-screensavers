@@ -1,9 +1,15 @@
 {
-  "uuid": "screensavers@johann.local",
+  "uuid": "screensavers@yofuness.github.io",
   "name": "Screensavers",
-  "description": "Shows a screensaver (Flurry, or any installed XScreenSaver hack) over the lock screen until the screen blanks.",
-  "shell-version": ["51"],
-  "session-modes": ["user", "unlock-dialog"],
+  "description": "Shows a screensaver over the lock screen until the screen blanks: the original macOS Flurry (via XScreenSaver's port) or any installed XScreenSaver hack. Requires the xscreensaver package for the screensaver programs. Runs in the unlock-dialog session mode because that is where the screensaver is shown.",
+  "shell-version": [
+    "51"
+  ],
+  "session-modes": [
+    "user",
+    "unlock-dialog"
+  ],
   "settings-schema": "org.gnome.shell.extensions.screensavers",
-  "version-name": "0.1"
+  "version-name": "0.1",
+  "url": "https://github.com/Yofuness/gnome-screensavers"
 }

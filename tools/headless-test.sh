@@ -11,7 +11,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-UUID=screensavers@johann.local
+UUID=screensavers@yofuness.github.io
 T=${SCREENSAVERS_TEST_DIR:-${TMPDIR:-/tmp}/screensavers-test}
 MONITORS=${SCREENSAVERS_TEST_MONITORS:-"1920x1080 1920x1080"}
 

@@ -1,4 +1,4 @@
-UUID := screensavers@johann.local
+UUID := screensavers@yofuness.github.io
 BUILD := build/$(UUID)
 EXT_DIR := $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 EXT_SRC := $(wildcard extension/*.js extension/*.json extension/*.css) \
@@ -29,10 +29,11 @@ uninstall:
 	-gnome-extensions disable $(UUID)
 	rm -rf $(EXT_DIR)
 
-# Upload package for extensions.gnome.org; leaves out the test-only debug hooks.
+# Upload package for extensions.gnome.org; leaves out the test-only debug hooks and the
+# compiled schema (GNOME compiles schemas itself since 44).
 zip: all
 	rm -f $(UUID).zip
-	cd $(BUILD) && zip -qr ../../$(UUID).zip . -x .stamp debug.js
+	cd $(BUILD) && zip -qr ../../$(UUID).zip . -x .stamp debug.js schemas/gschemas.compiled
 
 test: all
 	tools/headless-test.sh run
