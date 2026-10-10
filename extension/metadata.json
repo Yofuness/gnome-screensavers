@@ -1,0 +1,9 @@
+{
+  "uuid": "screensavers@johann.local",
+  "name": "Screensavers",
+  "description": "Shows a screensaver (Flurry, or any installed XScreenSaver hack) over the lock screen until the screen blanks.",
+  "shell-version": ["51"],
+  "session-modes": ["user", "unlock-dialog"],
+  "settings-schema": "org.gnome.shell.extensions.screensavers",
+  "version-name": "0.1"
+}

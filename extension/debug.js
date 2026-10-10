@@ -1,0 +1,117 @@
+// Test hooks, exported only when gnome-shell runs with SCREENSAVERS_DEBUG=1
+// (the isolated headless shell in tools/headless-test.sh).  Lets a script lock
+// the session, start savers, take screenshots and simulate input.
+
+import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import Shell from 'gi://Shell';
+
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
+const IFACE = `
+<node>
+  <interface name="local.johann.Screensavers.Debug">
+    <method name="Lock"/>
+    <method name="Unlock"/>
+    <method name="Motion"/>
+    <method name="Idle"/>
+    <method name="Preview"><arg type="s" direction="in" name="id"/></method>
+    <method name="Stop"/>
+    <method name="Key"/>
+    <method name="Click"/>
+    <method name="Screenshot">
+      <arg type="s" direction="in" name="path"/>
+      <arg type="b" direction="out" name="ok"/>
+    </method>
+    <method name="Status"><arg type="s" direction="out" name="json"/></method>
+    <method name="List"><arg type="s" direction="out" name="json"/></method>
+  </interface>
+</node>`;
+
+export class DebugInterface {
+    constructor(extension) {
+        this._ext = extension;
+        this._dbus = Gio.DBusExportedObject.wrapJSObject(IFACE, this);
+        this._dbus.export(Gio.DBus.session, '/local/johann/Screensavers/Debug');
+        const seat = global.stage.context.get_backend().get_default_seat();
+        this._keyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+        this._pointer = seat.create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
+        extension.log('debug interface exported');
+    }
+
+    destroy() {
+        this._dbus.unexport();
+    }
+
+    Lock() {
+        Main.screenShield.lock(true);
+    }
+
+    Unlock() {
+        Main.screenShield.deactivate(false);
+    }
+
+    // What GNOME does when the session's presence turns idle (auto-lock path).
+    Idle() {
+        Main.screenShield._onStatusChanged(3 /* GnomeSession.PresenceStatus.IDLE */);
+    }
+
+    Motion() {
+        const t = GLib.get_monotonic_time();
+        for (let i = 0; i < 10; i++)
+            this._pointer.notify_relative_motion(t + i * 1000, 15, 10);
+    }
+
+    Preview(id) {
+        this._ext.startSaver({id: id || null});
+    }
+
+    Stop() {
+        this._ext._stopSession({resumeFade: false});
+    }
+
+    Key() {
+        const t = GLib.get_monotonic_time();
+        this._keyboard.notify_keyval(t, Clutter.KEY_Shift_L, Clutter.KeyState.PRESSED);
+        this._keyboard.notify_keyval(t + 1000, Clutter.KEY_Shift_L, Clutter.KeyState.RELEASED);
+    }
+
+    Click() {
+        const t = GLib.get_monotonic_time();
+        this._pointer.notify_button(t, Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+        this._pointer.notify_button(t + 1000, Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+    }
+
+    ScreenshotAsync([path], invocation) {
+        const file = Gio.File.new_for_path(path);
+        const stream = file.replace(null, false, Gio.FileCreateFlags.NONE, null);
+        const shooter = new Shell.Screenshot();
+        shooter.screenshot(false, stream, (obj, res) => {
+            let ok = false;
+            try {
+                obj.screenshot_finish(res);
+                ok = true;
+            } catch (e) {
+                this._ext.log(`screenshot failed: ${e.message}`);
+            }
+            stream.close(null);
+            invocation.return_value(new GLib.Variant('(b)', [ok]));
+        });
+    }
+
+    Status() {
+        return JSON.stringify({
+            locked: Main.screenShield.locked,
+            active: Main.screenShield.active,
+            lightbox: Main.screenShield._shortLightbox?.active ?? null,
+            mode: Main.sessionMode.currentMode,
+            session: this._ext.session?.status() ?? null,
+            monitors: Main.layoutManager.monitors.map(m => [m.x, m.y, m.width, m.height]),
+        });
+    }
+
+    List() {
+        return JSON.stringify(this._ext.registry.list());
+    }
+}

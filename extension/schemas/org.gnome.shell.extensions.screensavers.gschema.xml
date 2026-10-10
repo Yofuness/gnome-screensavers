@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.screensavers" path="/org/gnome/shell/extensions/screensavers/">
+    <key name="saver" type="s">
+      <default>'flurry:classic'</default>
+      <summary>Screensaver to show</summary>
+      <description>Saver id: "flurry:&lt;preset&gt;" (XScreenSaver's port of the original macOS Flurry; presets classic, rgb, fire, water, binary, psychedelic, insane), "xscreensaver:&lt;hack&gt;" or "custom:&lt;n&gt;".</description>
+    </key>
+    <key name="random" type="b">
+      <default>false</default>
+      <summary>Pick a random saver from the favourites each time</summary>
+    </key>
+    <key name="favorites" type="as">
+      <default>[]</default>
+      <summary>Saver ids used for random rotation (empty = all)</summary>
+    </key>
+    <key name="custom-savers" type="as">
+      <default>[]</default>
+      <summary>Custom saver commands, each "Name|command line"</summary>
+    </key>
+    <key name="run-time" type="i">
+      <default>-1</default>
+      <summary>Seconds to run before letting the screen blank</summary>
+      <description>-1 follows GNOME's Screen Blank setting (org.gnome.desktop.session idle-delay); 0 runs until a key press or click.</description>
+    </key>
+    <key name="enabled-on-lock" type="b">
+      <default>true</default>
+      <summary>Show the screensaver when the session locks</summary>
+    </key>
+  </schema>
+</schemalist>
