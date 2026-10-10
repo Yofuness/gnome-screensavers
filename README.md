@@ -22,8 +22,8 @@ XScreenSaver hack, or any program you add yourself, can run instead.
 - **Comes back** after you dismiss it, once the lock screen has been left alone for a set time.
 - **History**: a local log of which screensaver ran when, browsable in the settings window. Keeps the
   newest 2000 runs by default (configurable up to 1,000,000); can be turned off.
-- **Test lock screen**: run the whole lock-screen experience (random pick, overlay, run time,
-  rotation) without locking.
+- **Test button** (top left of the settings window): run the whole lock-screen experience (random
+  pick, overlay, run time, rotation) without locking.
 
 ## Install
 

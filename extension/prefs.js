@@ -83,6 +83,35 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         window.add(this._buildBehaviourPage(settings));
         window.add(this._buildHistoryPage(settings, window));
         window.add(this._buildCustomPage(settings, window));
+        this._addTestButton(window, settings);
+    }
+
+    // A "Test" button at the left of the title bar: runs the screensaver as it
+    // would on the lock screen (your choice or a random pick, overlay, run time,
+    // rotation) without locking.  PreferencesWindow has no API for header
+    // buttons, so find its header bar and pack the button there.
+    _addTestButton(window, settings) {
+        const find = widget => {
+            if (widget instanceof Adw.HeaderBar)
+                return widget;
+            for (let c = widget.get_first_child(); c; c = c.get_next_sibling()) {
+                const found = find(c);
+                if (found)
+                    return found;
+            }
+            return null;
+        };
+        const header = find(window);
+        if (!header)
+            return;
+        const button = new Gtk.Button({
+            label: 'Test',
+            css_classes: ['suggested-action'],
+            tooltip_text: 'Run the screensaver exactly as it would when locked, without locking. ' +
+                'Press a key or click to stop.',
+        });
+        button.connect('clicked', () => preview(settings, '@test'));
+        header.pack_start(button);
     }
 
     // ── Screensaver page ────────────────────────────────────────────────
@@ -326,20 +355,6 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         settings.bind('enabled-on-lock', onLock, 'active', Gio.SettingsBindFlags.DEFAULT);
         lock.add(onLock);
 
-        const test = new Adw.ActionRow({
-            title: 'Test lock screen',
-            subtitle: 'Runs the screensaver exactly as it would when locked (your choice or a random pick, ' +
-                'overlay, run time, rotation) without locking. Press a key or click to stop. ' +
-                '“Come back after dismissing” is not simulated.',
-            subtitle_lines: 4,
-        });
-        const testButton = new Gtk.Button({label: 'Test', valign: Gtk.Align.CENTER,
-            css_classes: ['suggested-action']});
-        testButton.connect('clicked', () => preview(settings, '@test'));
-        test.add_suffix(testButton);
-        test.activatable_widget = testButton;
-        lock.add(test);
-
         const blankText = () => {
             const s = sessionSettings.get_uint('idle-delay');
             return s ? formatDuration(s) : 'Never';
@@ -436,7 +451,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
     _sizeRow(settings) {
         const row = new Adw.ActionRow({
             title: 'Size',
-            subtitle: 'Drag while a preview runs to see the change live',
+            subtitle: 'Drag while a test runs to see the change live',
         });
         const adj = new Gtk.Adjustment({lower: 50, upper: 200, step_increment: 5, page_increment: 25});
         const scale = new Gtk.Scale({
@@ -456,13 +471,6 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             tooltip_text: 'Back to 100%',
             css_classes: ['flat'],
         });
-        const play = new Gtk.Button({
-            icon_name: 'media-playback-start-symbolic',
-            valign: Gtk.Align.CENTER,
-            tooltip_text: 'Preview the selected screensaver',
-            css_classes: ['flat'],
-        });
-
         const sync = () => {
             const v = settings.get_int('overlay-scale');
             if (adj.value !== v)
@@ -478,7 +486,6 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             value.label = `${v}%`;
         });
         reset.connect('clicked', () => settings.set_int('overlay-scale', 100));
-        play.connect('clicked', () => preview(settings, settings.get_string('saver')));
         settings.connect('changed::overlay-scale', sync);
         sync();
 
@@ -493,7 +500,6 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         row.add_suffix(value);
         row.add_suffix(scale);
         row.add_suffix(reset);
-        row.add_suffix(play);
         return row;
     }
 
