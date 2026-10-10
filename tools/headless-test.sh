@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Runs the extension in a throwaway headless gnome-shell, isolated from the real
 # session: its own D-Bus, dconf database, data dirs and Wayland socket.  A bogus
 # XDG_SESSION_ID stops it attaching to the real logind session, which would let
@@ -144,7 +145,9 @@ right = 0
 for y in range(0, 500, 2):
     for x in range(0, 1400, 2):
         o = y * rs + x * n
-        if min(px[o], px[o + 1], px[o + 2]) > 150:   # white-ish text, not coloured saver
+        r, g, b = px[o], px[o + 1], px[o + 2]
+        # Neutral white (the clock text); the saver's bright pixels are tinted.
+        if min(r, g, b) > 150 and max(r, g, b) - min(r, g, b) < 20:
             right = max(right, x)
 print(right)
 EOF

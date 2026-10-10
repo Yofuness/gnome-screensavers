@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 UUID := screensavers@yofuness.github.io
 BUILD := build/$(UUID)
 EXT_DIR := $(HOME)/.local/share/gnome-shell/extensions/$(UUID)

@@ -44,7 +44,13 @@ export class DebugInterface {
         const seat = global.stage.context.get_backend().get_default_seat();
         this._keyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
         this._pointer = seat.create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
-        extension.log('debug interface exported');
+
+        // Rotate after SCREENSAVERS_TEST_ROTATE_SECONDS instead of whole minutes.
+        const rotateSeconds = Number(GLib.getenv('SCREENSAVERS_TEST_ROTATE_SECONDS') ?? 0);
+        if (rotateSeconds > 0) {
+            const minutes = extension._rotationSeconds.bind(extension);
+            extension._rotationSeconds = () => (minutes() > 0 ? rotateSeconds : 0);
+        }
     }
 
     destroy() {
@@ -75,7 +81,7 @@ export class DebugInterface {
     }
 
     Stop() {
-        this._ext._stopSession({resumeFade: false});
+        this._ext._stopSession({resumeFade: false, reason: 'stopped'});
     }
 
     Key() {
@@ -137,14 +143,27 @@ export class DebugInterface {
             active: Main.screenShield.active,
             lightbox: Main.screenShield._shortLightbox?.active ?? null,
             mode: Main.sessionMode.currentMode,
-            session: this._ext.session?.status() ?? null,
-            saver: this._ext.currentSaverId ?? null,
-            media: this._ext.session?.mediaTitle() ?? null,
+            session: this._sessionStatus(),
+            saver: this._ext._run?.id ?? null,
+            media: this._ext._session?.media.current()?.title ?? null,
             monitors: Main.layoutManager.monitors.map(m => [m.x, m.y, m.width, m.height]),
         });
     }
 
     List() {
-        return JSON.stringify(this._ext.registry.list());
+        return JSON.stringify(this._ext._registry.list());
+    }
+
+    _sessionStatus() {
+        const session = this._ext._session;
+        if (!session)
+            return null;
+        return session._entries.map(e => ({
+            pid: e.pid,
+            monitor: e.monitor.index,
+            alive: !!e.proc,
+            window: !!e.window,
+            shown: !!e.clone,
+        }));
     }
 }

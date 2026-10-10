@@ -29,10 +29,11 @@ XScreenSaver hack, or any program you add yourself, can run instead.
 
 ```sh
 sudo pacman -S xscreensaver   # provides Flurry and the other hacks (only the hack programs are used)
-make install                  # installs to ~/.local/share/gnome-shell/extensions and enables it
+make install                  # installs to ~/.local/share/gnome-shell/extensions
 ```
 
-Then **log out and back in**; Wayland can't load a new extension into a running session. Settings
+Then **log out and back in** (Wayland can't load a new extension into a running session) and turn
+it on in the Extensions app. Settings
 are in the Extensions app (or `gnome-extensions prefs screensavers@yofuness.github.io`).
 
 ## How it works
@@ -59,7 +60,8 @@ inhibitor while the saver runs, and when the run time is over it lets the origin
 | `extension/prefs.js` | Settings window. |
 | `extension/debug.js` | Test-only D-Bus hooks, loaded only when `SCREENSAVERS_DEBUG=1`. |
 | `tools/fake-mpris.py` | Fake media player used by the tests. |
-| `.github/workflows/build.yml` | CI: syntax check and builds the upload zip (attached to releases on `v*` tags). |
+| `.github/workflows/build.yml` | CI: ESLint, and builds the upload zip (attached to releases on `v*` tags). |
+| `eslint.config.js` | GNOME's recommended ESLint rules (`npm install && npm run lint`). |
 | `tools/headless-test.sh` | End-to-end tests in an isolated headless gnome-shell (`make test`). |
 
 ## Custom screensavers
@@ -78,7 +80,13 @@ your real session isn't touched. It then checks that:
 - the run-time limit hands back to GNOME's blanking;
 - auto-lock from idle works;
 - a crashing saver is cleaned up;
-- several XScreenSaver hacks render.
+- several XScreenSaver hacks render;
+- per-screensaver settings reach the command line;
+- the clock overlay shows, resizes live, and media keys reach the player without dismissing;
+- rotation swaps savers without a gap;
+- the saver comes back after being dismissed, and not after unlocking;
+- history is written and trimmed to its limit;
+- the Test button's run ends with its notice and never locks.
 
 Choose which hacks to test with `HACKS="glmatrix pipes" make test`.
 

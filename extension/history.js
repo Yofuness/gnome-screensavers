@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Local log of screensaver runs: one JSON object per line in
-// ~/.local/share/<uuid>/history.jsonl.  Written only when the user turns on
-// "log-history"; read by the preferences window's History page.
+// ~/.local/share/<uuid>/history.jsonl, written while "log-history" is on and
+// read by the preferences window's History page.
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -38,25 +38,20 @@ export function parseHistory(text) {
 }
 
 export class HistoryWriter {
-    /**
-     * @param {string} uuid
-     * @param {() => number} getLimit  how many runs to keep (read on every write)
-     */
-    constructor(uuid, getLimit) {
+    constructor(uuid) {
         this._file = historyFile(uuid);
-        this._getLimit = getLimit;
         this._queue = Promise.resolve();
         this._lines = null;   // line count, read from the file once
     }
 
-    /** Append one run: {saver, name, start, end, ended, lock}.  Never throws. */
-    record(entry) {
+    /** Append one run ({id, name, start, end, ended, lock}), keeping the newest `limit`. */
+    record(entry, limit) {
         const line = `${JSON.stringify(entry)}\n`;
-        this._queue = this._queue.then(() => this._append(line)).catch(e =>
+        this._queue = this._queue.then(() => this._append(line, limit)).catch(e =>
             console.warn(`[screensavers] history: ${e.message}`));
     }
 
-    async _append(line) {
+    async _append(line, limit) {
         try {
             // ~/.local/share always exists; only our own folder may be missing.
             await this._file.get_parent().make_directory_async(GLib.PRIORITY_LOW, null);
@@ -73,7 +68,6 @@ export class HistoryWriter {
             this._lines = (await this._readLines()).length;
         else
             this._lines++;
-        const limit = Math.max(1, this._getLimit());
         if (this._lines > limit * HEADROOM)
             await this._trim(limit);
     }
@@ -97,10 +91,5 @@ export class HistoryWriter {
     /** Recount on the next write (the limit changed, so it may need trimming). */
     recount() {
         this._lines = null;
-    }
-
-    /** Wait for queued writes (used when the extension is disabled). */
-    flush() {
-        return this._queue;
     }
 }

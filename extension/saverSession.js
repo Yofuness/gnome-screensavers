@@ -15,6 +15,9 @@ import {InfoOverlay, MediaWatcher} from './infoOverlay.js';
 
 const WINDOW_TIMEOUT_MS = 8000;
 const KILL_GRACE_MS = 1500;
+const ATTACH_RETRY_MS = 50;
+const ATTACH_RETRIES = 100;
+const SIGTERM = 15;
 
 // Media keys control the current player instead of dismissing the saver.
 const MEDIA_KEYS = new Map([
@@ -40,39 +43,31 @@ export function killStragglers() {
 export class SaverSession {
     /**
      * @param {object} params
-     * @param {(monitor: object) => {argv: string[], env?: object, title?: string}} params.launch
+     * @param {(monitor: object) => {argv: string[], title?: string}} params.launch
      *   saver command for one monitor
      * @param {(reason: 'key'|'click') => void} params.onDismiss  called on key press / click
      * @param {() => void} params.onFailed   called when no saver window could be shown
-     * @param {() => void} [params.onShown]  called once the first saver window is on screen
-     * @param {boolean} [params.hidden]      start invisible and fade in once shown (rotation)
-     * @param {boolean} [params.grab]        take an input grab (previews on the desktop)
-     * @param {{showClock: boolean, showMedia: boolean}} [params.info]  overlay contents
-     * @param {(msg: string) => void} params.log   progress messages
-     * @param {(msg: string) => void} params.warn  problems
+     * @param {() => void} params.onShown    called once the first saver window is on screen
+     * @param {boolean} params.hidden        start invisible and fade in once shown (rotation)
+     * @param {boolean} params.grab          take an input grab (previews on the desktop)
+     * @param {{showClock: boolean, showMedia: boolean, scale: number}} params.info
      */
-    constructor({launch, onDismiss, onFailed, onShown, hidden = false, grab = false, info = {}, log, warn}) {
-        this._wantGrab = grab;
+    constructor({launch, onDismiss, onFailed, onShown, hidden, grab, info}) {
         this._launch = launch;
         this._onDismiss = onDismiss;
         this._onFailed = onFailed;
-        this._onShown = onShown ?? (() => {});
+        this._onShown = onShown;
         this._hidden = hidden;
+        this._wantGrab = grab;
         this._info = info;
-        this._log = log;
-        this._warn = warn;
         this._entries = [];
-        this._stopped = false;
-    }
-
-    get running() {
-        return !this._stopped;
     }
 
     start() {
+        this._cancellable = new Gio.Cancellable();
+
         // Opaque black overlay above everything (lock screen and its lightboxes).
         this._overlay = new St.Widget({
-            name: 'screensaversOverlay',
             style: 'background-color: black;',
             reactive: true,
             x: 0,
@@ -84,23 +79,22 @@ export class SaverSession {
         Main.layoutManager.uiGroup.add_child(this._overlay);
 
         // Clock and now-playing on the primary monitor, above the saver clones.
-        this._media = new MediaWatcher(() => this._infoBox?.syncMedia());
+        // The watcher is needed even without the overlay, for the media keys.
+        this.media = new MediaWatcher(() => this._infoBox?.syncMedia());
         if (this._info.showClock || this._info.showMedia) {
             this._infoBox = new InfoOverlay({
                 monitor: Main.layoutManager.primaryMonitor,
-                showClock: !!this._info.showClock,
-                showMedia: !!this._info.showMedia,
-                media: this._media,
-                scale: this._info.scale ?? 1,
+                showClock: this._info.showClock,
+                showMedia: this._info.showMedia,
+                media: this.media,
+                scale: this._info.scale,
             });
             this._overlay.add_child(this._infoBox.actor);
         }
         Main.layoutManager.uiGroup.set_child_above_sibling(this._overlay, null);
         // Lightboxes raise themselves when they fade in; keep the saver on top.
-        this._raiseId = Main.layoutManager.uiGroup.connect('child-added', () => {
-            if (this._overlay)
-                Main.layoutManager.uiGroup.set_child_above_sibling(this._overlay, null);
-        });
+        this._raiseId = Main.layoutManager.uiGroup.connect('child-added', () =>
+            Main.layoutManager.uiGroup.set_child_above_sibling(this._overlay, null));
 
         // On the desktop, key presses would go straight to the focused app window
         // and never reach the shell; a grab routes them to us.  (The lock screen
@@ -110,39 +104,7 @@ export class SaverSession {
 
         // An event filter sees every input event before grabs route it, so it
         // works whatever the lock screen or unlock dialog has grabbed or focused.
-        // Only key presses and clicks dismiss; pointer motion and scrolling pass.
-        this._filterId = Clutter.Event.add_filter(global.stage, event => {
-            const type = event.type();
-            if ((type === Clutter.EventType.KEY_PRESS || type === Clutter.EventType.KEY_RELEASE) &&
-                MEDIA_KEYS.has(event.get_key_symbol())) {
-                if (type === Clutter.EventType.KEY_PRESS) {
-                    this._log(`media key: ${MEDIA_KEYS.get(event.get_key_symbol())}`);
-                    this._media.command(MEDIA_KEYS.get(event.get_key_symbol()));
-                }
-                return Clutter.EVENT_STOP;
-            }
-            if (type === Clutter.EventType.KEY_PRESS ||
-                type === Clutter.EventType.BUTTON_PRESS ||
-                type === Clutter.EventType.TOUCH_BEGIN) {
-                if (!this._dismissed) {
-                    this._dismissed = true;
-                    const reason = type === Clutter.EventType.KEY_PRESS ? 'key' : 'click';
-                    this._log(`dismissed by ${reason}`);
-                    // Leave the filter callback before tearing down.
-                    this._dismissId = GLib.idle_add(GLib.PRIORITY_HIGH, () => {
-                        this._dismissId = 0;
-                        this._onDismiss(reason);
-                        return GLib.SOURCE_REMOVE;
-                    });
-                }
-                return Clutter.EVENT_STOP;
-            }
-            if (type === Clutter.EventType.KEY_RELEASE ||
-                type === Clutter.EventType.BUTTON_RELEASE ||
-                type === Clutter.EventType.TOUCH_END)
-                return Clutter.EVENT_STOP;
-            return Clutter.EVENT_PROPAGATE;
-        });
+        this._filterId = Clutter.Event.add_filter(global.stage, event => this._onEvent(event));
 
         this._windowCreatedId = global.display.connect('window-created',
             (_display, window) => this._onWindowCreated(window));
@@ -153,23 +115,50 @@ export class SaverSession {
         this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, WINDOW_TIMEOUT_MS, () => {
             this._timeoutId = 0;
             if (!this._entries.some(e => e.clone)) {
-                this._warn('no saver window appeared in time');
+                console.warn('[screensavers] no screensaver window appeared in time');
                 this._onFailed();
             }
             return GLib.SOURCE_REMOVE;
         });
     }
 
+    // Key presses and clicks dismiss; media keys go to the player; pointer
+    // motion and scrolling pass through.
+    _onEvent(event) {
+        const type = event.type();
+        const isKey = type === Clutter.EventType.KEY_PRESS || type === Clutter.EventType.KEY_RELEASE;
+        if (isKey && MEDIA_KEYS.has(event.get_key_symbol())) {
+            if (type === Clutter.EventType.KEY_PRESS)
+                this.media.command(MEDIA_KEYS.get(event.get_key_symbol()));
+            return Clutter.EVENT_STOP;
+        }
+        if (type === Clutter.EventType.KEY_PRESS ||
+            type === Clutter.EventType.BUTTON_PRESS ||
+            type === Clutter.EventType.TOUCH_BEGIN) {
+            if (!this._dismissId) {
+                const reason = type === Clutter.EventType.KEY_PRESS ? 'key' : 'click';
+                // Leave the filter callback before tearing down.
+                this._dismissId = GLib.idle_add(GLib.PRIORITY_HIGH, () => {
+                    this._onDismiss(reason);
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
+            return Clutter.EVENT_STOP;
+        }
+        if (type === Clutter.EventType.KEY_RELEASE ||
+            type === Clutter.EventType.BUTTON_RELEASE ||
+            type === Clutter.EventType.TOUCH_END)
+            return Clutter.EVENT_STOP;
+        return Clutter.EVENT_PROPAGATE;
+    }
+
     _spawn(monitor) {
-        const {argv, env = {}, title} = this._launch(monitor);
-        const launcher = new Gio.SubprocessLauncher({flags: Gio.SubprocessFlags.NONE});
-        for (const [k, v] of Object.entries(env))
-            launcher.setenv(k, v, true);
+        const {argv, title} = this._launch(monitor);
         let proc;
         try {
-            proc = launcher.spawnv(argv);
+            proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
         } catch (e) {
-            this._warn(`failed to start ${argv.join(' ')}: ${e.message}`);
+            console.warn(`[screensavers] failed to start ${argv[0]}: ${e.message}`);
             return;
         }
         const entry = {
@@ -182,12 +171,14 @@ export class SaverSession {
             box: null,
         };
         this._entries.push(entry);
-        this._log(`started ${argv.join(' ')} (pid ${entry.pid}) for monitor ${monitor.index}`);
 
-        proc.wait_async(null, () => {
-            if (this._stopped)
-                return;
-            this._log(`saver pid ${entry.pid} exited`);
+        proc.wait_async(this._cancellable, (_proc, res) => {
+            try {
+                proc.wait_finish(res);
+            } catch (e) {
+                if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                    return;
+            }
             this._detach(entry);
             entry.proc = null;
             if (!this._entries.some(e => e.proc))
@@ -196,8 +187,6 @@ export class SaverSession {
     }
 
     _onWindowCreated(window) {
-        if (this._stopped)
-            return;
         const pid = window.get_pid();
         // Match by pid first; X11 programs that don't report one fall back to title.
         let entry = this._entries.find(e => !e.window && e.pid === pid);
@@ -211,21 +200,19 @@ export class SaverSession {
         // Mutter places new windows after this signal, so fit again once shown.
         entry.shownId = window.connect('shown', () => this._fit(entry));
         this._fit(entry);
-        this._attachWhenReady(entry);
+        this._attachWhenReady(entry, 0);
     }
 
     // The window actor may not exist yet when window-created fires.  Before the
     // first frame the clone is simply empty, which shows as the black backdrop.
-    _attachWhenReady(entry, tries = 0) {
-        if (this._stopped || entry.clone || !entry.window)
-            return;
+    _attachWhenReady(entry, tries) {
         if (entry.window.get_compositor_private()) {
             this._attach(entry);
             return;
         }
-        if (tries > 100)
+        if (tries >= ATTACH_RETRIES)
             return;
-        entry.retryId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+        entry.retryId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ATTACH_RETRY_MS, () => {
             entry.retryId = 0;
             this._attachWhenReady(entry, tries + 1);
             return GLib.SOURCE_REMOVE;
@@ -242,11 +229,6 @@ export class SaverSession {
     }
 
     _attach(entry) {
-        if (this._stopped || entry.clone)
-            return;
-        const actor = entry.window.get_compositor_private();
-        if (!actor)
-            return;
         const {monitor} = entry;
         entry.box = new St.Widget({
             x: monitor.x,
@@ -255,7 +237,7 @@ export class SaverSession {
             height: monitor.height,
             clip_to_allocation: true,
         });
-        entry.clone = new Clutter.Clone({source: actor});
+        entry.clone = new Clutter.Clone({source: entry.window.get_compositor_private()});
         entry.box.add_child(entry.clone);
         this._overlay.add_child(entry.box);
         if (this._infoBox)
@@ -263,20 +245,18 @@ export class SaverSession {
         this._layout(entry);
         entry.sizeId = entry.window.connect('size-changed', () => this._layout(entry));
         entry.posId = entry.window.connect('position-changed', () => this._layout(entry));
-        this._log(`showing saver pid ${entry.pid} on monitor ${monitor.index}`);
-        if (!this._shown) {
-            this._shown = true;
+
+        if (this._onShown) {
             if (this._hidden)
                 this._overlay.ease({opacity: 255, duration: 800});
             this._onShown();
+            this._onShown = null;
         }
     }
 
     // Place the clone so the window's frame exactly covers the monitor, scaling
     // when the program refused the requested size.
     _layout(entry) {
-        if (!entry.clone)
-            return;
         const frame = entry.window.get_frame_rect();
         const buffer = entry.window.get_buffer_rect();
         if (frame.width <= 0 || frame.height <= 0)
@@ -301,11 +281,8 @@ export class SaverSession {
         entry.clone = null;
     }
 
-    /** Snapshot of what is running, for the debug interface. */
-    /** A centred message on the primary monitor (used by "Test lock screen"). */
+    /** A centred message on the primary monitor (used by the Test button). */
     showNotice(text) {
-        if (!this._overlay)
-            return;
         const m = Main.layoutManager.primaryMonitor;
         const label = new St.Label({text, style_class: 'screensavers-notice', opacity: 0});
         this._overlay.add_child(label);
@@ -315,77 +292,55 @@ export class SaverSession {
         label.ease({opacity: 255, duration: 400});
     }
 
-    /** Resize the clock/media overlay of the running saver. */
     setInfoScale(scale) {
-        this._info.scale = scale;
         this._infoBox?.setScale(scale);
     }
 
-    /** Title of the track the overlay would show, for the debug interface. */
-    mediaTitle() {
-        return this._media?.current()?.title ?? null;
-    }
-
-    status() {
-        return this._entries.map(e => ({
-            pid: e.pid,
-            monitor: e.monitor.index,
-            alive: !!e.proc,
-            window: !!e.window,
-            shown: !!e.clone,
-            frame: e.window ? (({x, y, width, height}) => ({x, y, width, height}))(e.window.get_frame_rect()) : null,
-        }));
-    }
-
+    /** Remove everything; the owner drops its reference afterwards. */
     stop() {
-        if (this._stopped)
-            return;
-        this._stopped = true;
         if (this._timeoutId)
             GLib.source_remove(this._timeoutId);
         this._timeoutId = 0;
         if (this._dismissId)
             GLib.source_remove(this._dismissId);
         this._dismissId = 0;
-        if (this._grab) {
+        this._cancellable.cancel();
+
+        if (this._grab)
             Main.popModal(this._grab);
-            this._grab = null;
-        }
-        if (this._filterId) {
-            Clutter.Event.remove_filter(this._filterId);
-            this._filterId = 0;
-        }
-        if (this._windowCreatedId)
-            global.display.disconnect(this._windowCreatedId);
-        if (this._raiseId)
-            Main.layoutManager.uiGroup.disconnect(this._raiseId);
+        this._grab = null;
+        Clutter.Event.remove_filter(this._filterId);
+        global.display.disconnect(this._windowCreatedId);
+        Main.layoutManager.uiGroup.disconnect(this._raiseId);
+
         for (const entry of this._entries) {
             this._detach(entry);
-            if (entry.proc) {
-                const proc = entry.proc;
-                proc.send_signal(15);
-                // Escalate if it ignores SIGTERM.
-                const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, KILL_GRACE_MS, () => {
-                    stragglers.delete(proc);
-                    proc.force_exit();
-                    return GLib.SOURCE_REMOVE;
-                });
-                stragglers.set(proc, id);
-                proc.wait_async(null, () => {
-                    if (stragglers.get(proc) === id) {
-                        GLib.source_remove(id);
-                        stragglers.delete(proc);
-                    }
-                });
-            }
+            if (entry.proc)
+                this._terminate(entry.proc);
         }
         this._entries = [];
         this._infoBox?.destroy();
         this._infoBox = null;
-        this._media?.destroy();
-        this._media = null;
-        this._overlay?.destroy();
+        this.media.destroy();
+        this.media = null;
+        this._overlay.destroy();
         this._overlay = null;
-        this._log('stopped');
+    }
+
+    // SIGTERM now, SIGKILL if it is still running after the grace period.
+    _terminate(proc) {
+        proc.send_signal(SIGTERM);
+        const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, KILL_GRACE_MS, () => {
+            stragglers.delete(proc);
+            proc.force_exit();
+            return GLib.SOURCE_REMOVE;
+        });
+        stragglers.set(proc, id);
+        proc.wait_async(null, () => {
+            if (stragglers.get(proc) === id) {
+                GLib.source_remove(id);
+                stragglers.delete(proc);
+            }
+        });
     }
 }

@@ -18,8 +18,8 @@ jobs:
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libglib2.0-bin zip
 
-      - name: Syntax check
-        run: for f in extension/*.js; do node --check --input-type=module < "$f" || exit 1; done
+      - name: Lint
+        run: npm install --no-audit --no-fund && npx eslint extension
 
       - name: Build zip
         run: make zip

@@ -17,56 +17,51 @@ import {SaverSession, killStragglers} from './saverSession.js';
 import {Registry} from './registry.js';
 import {HistoryWriter} from './history.js';
 
+const NOTICE_SECONDS = 3;
+
 export default class ScreensaversExtension extends Extension {
     enable() {
-        this._verbose = !!GLib.getenv('SCREENSAVERS_DEBUG');
         this._settings = this.getSettings();
         this._sessionSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.session'});
-        this.registry = new Registry(this, this._settings);
-        this._registryReady = this.registry.load().catch(e => this.warn(`scanning savers: ${e}`));
-        this._history = new HistoryWriter(this.uuid, () => this._settings?.get_int('history-limit') ?? 2000);
+        this._registry = new Registry(this._settings);
+        this._registryReady = this._registry.load().catch(e =>
+            console.warn(`[screensavers] scanning screensavers: ${e.message}`));
+        this._history = new HistoryWriter(this.uuid);
         this._session = null;
-        this._run = null;           // {id, name, start, lock} for the session on screen
+        this._run = null;
+        this._outgoing = null;
         this._pendingFade = null;
-        this._passFade = false;
+        this._pendingStart = null;
 
-        const ext = this;
-        this._injections = new InjectionManager();
-        this._injections.overrideMethod(ScreenShield.prototype, '_activateFade',
-            original => {
+        // Main.screenShield only exists when the system allows locking.
+        this._shield = Main.screenShield;
+        if (this._shield) {
+            const ext = this;
+            this._injections = new InjectionManager();
+            this._injections.overrideMethod(ScreenShield.prototype, '_activateFade', original => {
                 ext._originalFade = original;
                 return function (lightbox, time) {
-                    if (ext._interceptFade(this, original, lightbox, time))
-                        return;
-                    original.call(this, lightbox, time);
+                    if (!ext._interceptFade(this, original, lightbox, time))
+                        original.call(this, lightbox, time);
                 };
             });
-
-        Main.screenShield?.connectObject('locked-changed', () => this._onLockedChanged(), this);
+            this._shield.connectObject('locked-changed', () => this._onLockedChanged(), this);
+        }
 
         // The preferences window asks for a preview by writing "<saver id>#<time>"
         // to this key; the time part makes repeated requests for one saver count.
-        this._settings.connectObject('changed::preview-request', () => {
-            const request = this._settings.get_string('preview-request');
-            const id = request.slice(0, request.lastIndexOf('#'));
-            if (!id || Main.screenShield?.locked)
-                return;
-            if (id === '@test')
-                this.startSaver({test: true});
-            else
-                this.startSaver({id});
-        }, this);
-        this._settings.connectObject('changed::history-limit', () => this._history?.recount(), this);
-        // Resize the overlay of a running saver as the slider moves.
-        this._settings.connectObject('changed::overlay-scale', () =>
-            this._session?.setInfoScale(this._overlayScale()), this);
+        this._settings.connectObject(
+            'changed::preview-request', () => this._onPreviewRequest(),
+            'changed::history-limit', () => this._history.recount(),
+            'changed::overlay-scale', () => this._session?.setInfoScale(this._overlayScale()),
+            this);
 
         // BEGIN DEBUG (removed from the extensions.gnome.org package by `make zip`)
-        if (this._verbose) {
+        if (GLib.getenv('SCREENSAVERS_DEBUG')) {
             import('./debug.js').then(({DebugInterface}) => {
                 if (this._settings)
                     this._debug = new DebugInterface(this);
-            }).catch(e => this.warn(`debug interface: ${e}`));
+            });
         }
         // END DEBUG
     }
@@ -76,41 +71,35 @@ export default class ScreensaversExtension extends Extension {
         // purpose is to show a screensaver on the lock screen, so it must stay
         // enabled while the session is locked.  disable() therefore runs only on
         // logout or when the user turns the extension off, never on lock/unlock.
-        // Everything it set up is torn down here: the running saver and its
-        // processes, timers, the idle inhibitor, the input filter and the
-        // ScreenShield override.
+        // BEGIN DEBUG
         this._debug?.destroy();
         this._debug = null;
+        // END DEBUG
         this._settings.disconnectObject(this);
         this._cancelRetrigger();
         this._stopSession({resumeFade: false, reason: 'disabled'});
         killStragglers();
-        Main.screenShield?.disconnectObject(this);
-        this._injections.clear();
+        this._shield?.disconnectObject(this);
+        this._injections?.clear();
         this._injections = null;
         this._originalFade = null;
+        this._shield = null;
+        this._pendingStart = null;
         this._history = null;
-        this.registry = null;
+        this._registry = null;
         this._settings = null;
         this._sessionSettings = null;
     }
 
-    // Progress messages only when debugging; problems always.
-    log(msg) {
-        if (this._verbose)
-            console.log(`[screensavers] ${msg}`);
-    }
-
-    warn(msg) {
-        console.warn(`[screensavers] ${msg}`);
-    }
-
-    get session() {
-        return this._session;
-    }
-
-    get currentSaverId() {
-        return this._run?.id ?? null;
+    _onPreviewRequest() {
+        const request = this._settings.get_string('preview-request');
+        const id = request.slice(0, request.lastIndexOf('#'));
+        if (!id || this._shield?.locked)
+            return;
+        if (id === '@test')
+            this.startSaver({test: true});
+        else
+            this.startSaver({id});
     }
 
     // Called instead of ScreenShield._activateFade.  Returns true when we took over.
@@ -119,7 +108,7 @@ export default class ScreensaversExtension extends Extension {
             return false;
         this._pendingFade = {shield, original, lightbox, time};
         if (this._session)
-            return true; // already showing a saver; GNOME asked to fade again
+            return true;
         return this.startSaver({onLock: true});
     }
 
@@ -135,33 +124,24 @@ export default class ScreensaversExtension extends Extension {
      * rotation) without locking.
      */
     startSaver({onLock = false, id = null, rotate = false, test = false} = {}) {
-        // Right after login the saver list may still be loading; start once it's ready.
-        if (!this.registry.loaded) {
-            if (!this._waitingForRegistry) {
-                this._waitingForRegistry = true;
-                this._registryReady.then(() => {
-                    this._waitingForRegistry = false;
-                    if (this.registry)
-                        this.startSaver({onLock, id, test});
-                });
-            }
-            return true;
-        }
+        if (!this._registry.loaded)
+            return this._startWhenLoaded({onLock, id, test});
         this._cancelRetrigger();
 
         const saverId = id ?? (rotate
-            ? this.registry.choose({random: true, exclude: this._run?.id})
-            : this.registry.choose());
-        const launch = this.registry.launcher(saverId);
+            ? this._registry.choose({random: true, exclude: this._run?.id})
+            : this._registry.choose());
+        const launch = this._registry.launcher(saverId);
         if (!launch) {
-            this.warn(`unknown saver "${saverId}"`);
+            console.warn(`[screensavers] unknown screensaver "${saverId}"`);
             return false;
         }
 
-        // A rotation keeps the old saver on screen until the new one shows; anything
-        // else replaces it now, but keeps the fade GNOME just asked for.
-        const previous = rotate ? {session: this._session, run: this._run} : null;
-        if (!rotate) {
+        if (rotate) {
+            // Keep the old saver on screen until the new one shows.
+            this._stopOutgoing('rotated');
+            this._outgoing = {session: this._session, run: this._run};
+        } else {
             const pending = this._pendingFade;
             this._stopSession({resumeFade: false, reason: 'replaced'});
             this._pendingFade = onLock ? pending : null;
@@ -169,18 +149,53 @@ export default class ScreensaversExtension extends Extension {
             this._test = test;
         }
 
-        this.log(`starting ${saverId}${rotate ? ' (rotation)' : onLock ? ' (lock)' : this._test ? ' (test)' : ' (preview)'}`);
+        const session = this._createSession(launch, rotate);
+        this._session = session;
+        this._run = {
+            id: saverId,
+            name: this._registry.list().find(s => s.id === saverId)?.name ?? saverId,
+            start: Date.now(),
+            lock: this._onLock,
+            ...this._test ? {test: true} : {},
+        };
+        session.start();
+
+        if (rotate)
+            return true;
+        if (onLock)
+            this._inhibitIdle();
+        if (onLock || test)
+            this._startRunTimer();
+        this._scheduleRotation();
+        return true;
+    }
+
+    // Right after login the saver list may still be loading; start once it's
+    // ready.  Only the latest request counts.
+    _startWhenLoaded(request) {
+        const waiting = this._pendingStart;
+        this._pendingStart = request;
+        if (!waiting) {
+            this._registryReady.then(() => {
+                const start = this._pendingStart;
+                this._pendingStart = null;
+                if (start)
+                    this.startSaver(start);
+            });
+        }
+        return true;
+    }
+
+    _createSession(launch, hidden) {
         const session = new SaverSession({
             launch,
-            hidden: rotate,
+            hidden,
             grab: !this._onLock,
             info: {
                 showClock: this._settings.get_boolean('show-clock'),
                 showMedia: this._settings.get_boolean('show-media'),
                 scale: this._overlayScale(),
             },
-            log: m => this.log(m),
-            warn: m => this.warn(m),
             onDismiss: reason => {
                 if (this._session === session)
                     this._dismiss(reason);
@@ -190,61 +205,47 @@ export default class ScreensaversExtension extends Extension {
                     this._stopSession({resumeFade: true, reason: 'failed'});
             },
             onShown: () => {
-                if (previous?.session) {
-                    this._logRun(previous.run, 'rotated');
-                    previous.session.stop();
-                }
+                if (this._session === session)
+                    this._stopOutgoing('rotated');
             },
         });
-        this._session = session;
-        this._run = {
-            id: saverId,
-            name: this.registry.list().find(s => s.id === saverId)?.name ?? saverId,
-            start: Date.now(),
-            lock: !!this._onLock,
-            ...this._test ? {test: true} : {},
-        };
-        session.start();
+        return session;
+    }
 
-        if (rotate)
-            return true;
-        if (onLock)
-            this._inhibitIdle();
-
+    _startRunTimer() {
         const runTime = this._runTimeSeconds();
-        if ((onLock || test) && runTime > 0) {
-            this._runTimerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, runTime, () => {
-                this._runTimerId = 0;
-                if (this._test) {
-                    // A test can't hand over to GNOME's fade; say what would happen.
-                    this.log('test run time over');
-                    this._session?.showNotice('Your screen would blank now');
-                    this._noticeTimerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
-                        this._noticeTimerId = 0;
-                        this._stopSession({resumeFade: false, reason: 'run-time'});
-                        return GLib.SOURCE_REMOVE;
-                    });
-                    return GLib.SOURCE_REMOVE;
-                }
-                this.log('run time over, letting the screen blank');
+        if (runTime <= 0)
+            return;
+        this._runTimerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, runTime, () => {
+            this._runTimerId = 0;
+            if (this._test)
+                this._endTest();
+            else
                 this._stopSession({resumeFade: true, reason: 'run-time'});
-                return GLib.SOURCE_REMOVE;
-            });
-        }
-        this._scheduleRotation();
-        return true;
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    // A test can't hand over to GNOME's fade; say what would happen instead.
+    _endTest() {
+        this._session.showNotice('Your screen would blank now');
+        this._noticeTimerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, NOTICE_SECONDS, () => {
+            this._noticeTimerId = 0;
+            this._stopSession({resumeFade: false, reason: 'run-time'});
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _rotationSeconds() {
+        return this._settings.get_int('rotate-interval') * 60;
     }
 
     _scheduleRotation() {
-        const minutes = this._settings.get_int('rotate-interval');
-        if (minutes <= 0)
+        const seconds = this._rotationSeconds();
+        if (seconds <= 0)
             return;
-        // Test hook: rotate after this many seconds instead of minutes.
-        const testSeconds = Number(GLib.getenv('SCREENSAVERS_TEST_ROTATE_SECONDS') ?? 0);
-        const seconds = this._verbose && testSeconds > 0 ? testSeconds : minutes * 60;
         this._rotateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, seconds, () => {
-            if (this._session)
-                this.startSaver({onLock: this._onLock, rotate: true});
+            this.startSaver({onLock: this._onLock, rotate: true});
             return GLib.SOURCE_CONTINUE;
         });
     }
@@ -252,6 +253,7 @@ export default class ScreensaversExtension extends Extension {
     // While a lock-time saver runs, keep the power daemon from blanking: once
     // the lock screen reports "active" it would blank within seconds.  This is
     // the same idle inhibitor video players take; released when the saver stops.
+    // _inhibiting covers the time between the request and its reply.
     _inhibitIdle() {
         if (this._inhibitCookie || this._inhibiting)
             return;
@@ -261,15 +263,17 @@ export default class ScreensaversExtension extends Extension {
             new GLib.Variant('(susu)', [this.uuid, 0, 'Showing a screensaver', 8]),
             new GLib.VariantType('(u)'), Gio.DBusCallFlags.NONE, -1, null, (conn, res) => {
                 this._inhibiting = false;
+                let cookie;
                 try {
-                    const [cookie] = conn.call_finish(res).deepUnpack();
-                    if (this._session && this._onLock)
-                        this._inhibitCookie = cookie;
-                    else
-                        this._releaseCookie(cookie); // saver already gone
+                    [cookie] = conn.call_finish(res).deepUnpack();
                 } catch (e) {
-                    this.warn(`idle inhibit failed: ${e.message}`);
+                    console.warn(`[screensavers] idle inhibit failed: ${e.message}`);
+                    return;
                 }
+                if (this._session && this._onLock)
+                    this._inhibitCookie = cookie;
+                else
+                    this._releaseCookie(cookie);
             });
     }
 
@@ -295,12 +299,15 @@ export default class ScreensaversExtension extends Extension {
     _dismiss(reason) {
         const pending = this._pendingFade;
         this._stopSession({resumeFade: false, reason});
-        // Idle without locking (lock disabled): GNOME raised its shield and a
-        // modal grab expecting to fade; undo that like user activity would.
-        if (pending && Main.screenShield && !Main.screenShield.locked)
-            Main.screenShield.deactivate(false);
-        if (Main.screenShield?.locked)
+        if (!this._shield)
+            return;
+        if (this._shield.locked) {
             this._armRetrigger();
+        } else if (pending) {
+            // Idle without locking (lock disabled): GNOME raised its shield and a
+            // modal grab expecting to fade; undo that like user activity would.
+            this._shield.deactivate(false);
+        }
     }
 
     // After a dismissal on the lock screen, bring the saver back once the user
@@ -308,17 +315,15 @@ export default class ScreensaversExtension extends Extension {
     _armRetrigger() {
         this._cancelRetrigger();
         const delay = this._settings.get_int('retrigger-delay');
-        if (delay <= 0 || !this._originalFade)
+        if (delay <= 0)
             return;
-        const monitor = global.backend.get_core_idle_monitor();
-        this._retriggerWatch = monitor.add_idle_watch(delay * 1000, () => {
+        this._retriggerWatch = global.backend.get_core_idle_monitor().add_idle_watch(delay * 1000, () => {
             this._cancelRetrigger();
-            const shield = Main.screenShield;
-            if (this._session || !shield?.locked || !this._settings.get_boolean('enabled-on-lock'))
+            const shield = this._shield;
+            if (this._session || !shield.locked || !this._settings.get_boolean('enabled-on-lock'))
                 return;
-            this.log('idle again on the lock screen, showing the saver');
             // Close a half-used unlock prompt, as GNOME does when the user goes idle.
-            shield._maybeCancelDialog?.();
+            shield._maybeCancelDialog();
             this._pendingFade = {
                 shield,
                 original: this._originalFade,
@@ -336,33 +341,44 @@ export default class ScreensaversExtension extends Extension {
     }
 
     _logRun(run, ended) {
-        if (!run || !this._settings?.get_boolean('log-history'))
-            return;
-        this._history?.record({...run, end: Date.now(), ended});
+        if (this._settings.get_boolean('log-history'))
+            this._history.record({...run, end: Date.now(), ended}, this._settings.get_int('history-limit'));
     }
 
-    _stopSession({resumeFade, reason = 'stopped'}) {
-        if (this._runTimerId) {
+    // The saver being replaced during a rotation.
+    _stopOutgoing(reason) {
+        if (!this._outgoing)
+            return;
+        this._logRun(this._outgoing.run, reason);
+        this._outgoing.session.stop();
+        this._outgoing = null;
+    }
+
+    _stopSession({resumeFade, reason}) {
+        if (this._runTimerId)
             GLib.source_remove(this._runTimerId);
-            this._runTimerId = 0;
-        }
-        if (this._rotateId) {
+        this._runTimerId = 0;
+        if (this._rotateId)
             GLib.source_remove(this._rotateId);
-            this._rotateId = 0;
-        }
-        if (this._noticeTimerId) {
+        this._rotateId = 0;
+        if (this._noticeTimerId)
             GLib.source_remove(this._noticeTimerId);
-            this._noticeTimerId = 0;
-        }
-        if (this._session)
+        this._noticeTimerId = 0;
+
+        this._stopOutgoing(reason);
+        if (this._session) {
             this._logRun(this._run, reason);
-        this._session?.stop();
+            this._session.stop();
+        }
         this._session = null;
         this._run = null;
         this._uninhibitIdle();
+
         const pending = this._pendingFade;
         this._pendingFade = null;
         if (resumeFade && pending) {
+            // The original fade can call activate(), which calls _activateFade
+            // again; let that call through instead of starting another saver.
             this._passFade = true;
             try {
                 pending.original.call(pending.shield, pending.lightbox, pending.time);
@@ -373,7 +389,7 @@ export default class ScreensaversExtension extends Extension {
     }
 
     _onLockedChanged() {
-        if (Main.screenShield.locked)
+        if (this._shield.locked)
             return;
         // Unlocked: a lock-time saver must go away, and nothing should come back.
         this._cancelRetrigger();

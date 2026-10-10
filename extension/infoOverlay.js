@@ -17,6 +17,12 @@ const MARGIN_Y = 40;
 // Sizes at 100%; scaled by setting fonts directly so text stays sharp at any size.
 const BASE = {time: 64, date: 16, title: 13, artist: 11, player: 9, art: 56, mediaGap: 28, artGap: 14};
 
+// Players can vanish or refuse a call at any time; only cancellation is expected.
+function ignoreCancelled(e) {
+    if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+        console.warn(`[screensavers] media player: ${e.message}`);
+}
+
 /** Tracks MPRIS players on the session bus and picks the one that matters. */
 export class MediaWatcher {
     constructor(onChange) {
@@ -37,12 +43,14 @@ export class MediaWatcher {
         Gio.DBus.session.call('org.freedesktop.DBus', '/org/freedesktop/DBus',
             'org.freedesktop.DBus', 'ListNames', null, new GLib.VariantType('(as)'),
             Gio.DBusCallFlags.NONE, -1, this._cancellable, (conn, res) => {
+                let names;
                 try {
-                    const [names] = conn.call_finish(res).deepUnpack();
-                    names.filter(n => n.startsWith(MPRIS_PREFIX)).forEach(n => this._add(n));
-                } catch {
-                    // cancelled or bus gone
+                    [names] = conn.call_finish(res).deepUnpack();
+                } catch (e) {
+                    ignoreCancelled(e);
+                    return;
                 }
+                names.filter(n => n.startsWith(MPRIS_PREFIX)).forEach(n => this._add(n));
             });
     }
 
@@ -56,7 +64,8 @@ export class MediaWatcher {
             (_o, res) => {
                 try {
                     entry.proxy = Gio.DBusProxy.new_finish(res);
-                } catch {
+                } catch (e) {
+                    ignoreCancelled(e);
                     return;
                 }
                 if (this._players.get(name) !== entry)
@@ -68,12 +77,14 @@ export class MediaWatcher {
         Gio.DBus.session.call(name, '/org/mpris/MediaPlayer2', 'org.freedesktop.DBus.Properties', 'Get',
             new GLib.Variant('(ss)', ['org.mpris.MediaPlayer2', 'Identity']), new GLib.VariantType('(v)'),
             Gio.DBusCallFlags.NONE, -1, this._cancellable, (conn, res) => {
+                // Without an Identity the bus-name fallback stays.
                 try {
                     entry.identity = conn.call_finish(res).deepUnpack()[0].deepUnpack();
-                    this._onChange();
-                } catch {
-                    // keep the bus-name fallback
+                } catch (e) {
+                    ignoreCancelled(e);
+                    return;
                 }
+                this._onChange();
             });
     }
 
@@ -116,16 +127,14 @@ export class MediaWatcher {
     /** Send PlayPause / Next / Previous to the current player. */
     command(method) {
         const target = this.current()?.entry ?? [...this._players.values()].find(e => e.proxy);
-        target?.proxy?.call(method, null, Gio.DBusCallFlags.NONE, -1, null, null);
-        return !!target?.proxy;
+        target?.proxy.call(method, null, Gio.DBusCallFlags.NONE, -1, null, null);
     }
 
     destroy() {
         this._cancellable.cancel();
         Gio.DBus.session.signal_unsubscribe(this._ownerId);
-        for (const name of [...this._players.keys()]) {
-            const entry = this._players.get(name);
-            if (entry?.changedId)
+        for (const entry of this._players.values()) {
+            if (entry.changedId)
                 entry.proxy.disconnect(entry.changedId);
         }
         this._players.clear();
@@ -221,7 +230,6 @@ export class InfoOverlay {
         // Only local art; remote URLs would need a network fetch on the lock screen.
         if (now.art.startsWith('file://')) {
             this._art.gicon = new Gio.FileIcon({file: Gio.File.new_for_uri(now.art)});
-            this._art.visible = true;
         } else {
             this._art.gicon = null;
             this._art.icon_name = 'audio-x-generic-symbolic';

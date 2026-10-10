@@ -6,7 +6,7 @@ import Gtk from 'gi://Gtk';
 
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import {Registry} from './registry.js';
+import {Registry, optionsKey, readSaverOptions} from './registry.js';
 import {historyFile, parseHistory} from './history.js';
 
 Gio._promisify(Gio.File.prototype, 'load_contents_async');
@@ -29,14 +29,21 @@ function preview(settings, id) {
     settings.set_string('preview-request', `${id}#${GLib.get_real_time()}`);
 }
 
+// Option labels in the XScreenSaver XML sometimes fall back to the bare id.
+function optionLabel(o) {
+    return o.label === o.id ? o.label.replace(/^./, c => c.toUpperCase()) : o.label;
+}
+
 /**
- * A combo row for an integer setting with short labels; the subtitle explains
- * what the selected choice does, so long descriptions never get cut off.
+ * A row for an integer setting with short dropdown labels; the subtitle explains
+ * what the selected choice does.  `also` lists further [object, signal] pairs
+ * that change the explanation.
+ *
+ * An ActionRow with a separate dropdown rather than an Adw.ComboRow: the
+ * ComboRow shrinks its value label to make room for a long subtitle, while a
+ * Gtk.DropDown keeps its full width and the subtitle wraps instead.
  */
-function choiceRow(settings, key, title, choices) {
-    // An ActionRow with a separate dropdown rather than an Adw.ComboRow: the
-    // ComboRow shrinks its value label to make room for a long subtitle, while a
-    // Gtk.DropDown keeps its full width and the subtitle wraps instead.
+function choiceRow(settings, key, title, choices, also = []) {
     const row = new Adw.ActionRow({title, subtitle_lines: 0});
     const dropdown = Gtk.DropDown.new_from_strings(choices.map(c => c.label));
     dropdown.valign = Gtk.Align.CENTER;
@@ -59,8 +66,9 @@ function choiceRow(settings, key, title, choices) {
         row.subtitle = c?.explain() ?? '';
     });
     settings.connect(`changed::${key}`, sync);
+    for (const [object, signal] of also)
+        object.connect(signal, sync);
     sync();
-    row.refresh = sync;   // re-explain when something outside the key changes
     return row;
 }
 
@@ -76,7 +84,7 @@ const ENDED = {
 export default class ScreensaversPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
-        const registry = new Registry(this, settings);
+        const registry = new Registry(settings);
         window.set_default_size(760, 860);
         window.search_enabled = false;
         window.add(this._buildSaversPage(settings, registry, window));
@@ -124,8 +132,8 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
 
         const group = new Adw.PreferencesGroup({
             title: 'Screensavers',
-            description: 'Pick the one to show. ☆ adds it to the random rotation, ⚙ changes its ' +
-                'settings, ▶ previews it (press a key or click to stop).',
+            description: 'Pick the one to show. The star adds it to the random rotation, the gear ' +
+                'changes its settings and the play button previews it (press a key or click to stop).',
         });
         page.add(group);
 
@@ -138,6 +146,14 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const favourites = () => new Set(settings.get_strv('favorites'));
         let radioGroup = null;
         const radios = new Map();
+        const rowSavers = new Map();
+
+        const syncSelected = () => {
+            const radio = radios.get(settings.get_string('saver'));
+            if (radio && !radio.active)
+                radio.active = true;
+        };
+        settings.connect('changed::saver', syncSelected);
 
         // The saver list is read from disk asynchronously; fill it in when ready.
         const populate = () => {
@@ -153,7 +169,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                     subtitle: esc(`${saver.group} · ${saver.description}`),
                     subtitle_lines: 2,
                 });
-                row._saver = saver;
+                rowSavers.set(row, saver);
 
                 const radio = new Gtk.CheckButton({valign: Gtk.Align.CENTER});
                 if (radioGroup)
@@ -209,20 +225,13 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             }
             syncSelected();
         };
-
-        const syncSelected = () => {
-            const radio = radios.get(settings.get_string('saver'));
-            if (radio && !radio.active)
-                radio.active = true;
-        };
-        settings.connect('changed::saver', syncSelected);
         registry.load().then(populate).catch(e => console.warn(`[screensavers] ${e.message}`));
 
         list.set_filter_func(row => {
             const q = search.text.trim().toLowerCase();
             if (!q)
                 return true;
-            const s = row._saver;
+            const s = rowSavers.get(row);
             return `${s.name} ${s.group} ${s.description}`.toLowerCase().includes(q);
         });
         search.connect('search-changed', () => list.invalidate_filter());
@@ -233,17 +242,10 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
     // A settings dialog generated from the hack's XScreenSaver config.
     _openOptions(settings, registry, saver, window) {
         const options = registry.options(saver.id);
-        const key = registry.optionsKey(saver.id);
-        const read = () => {
-            try {
-                return JSON.parse(settings.get_string('saver-options'));
-            } catch {
-                return {};
-            }
-        };
-        const values = {...read()[key] ?? {}};
+        const key = optionsKey(saver.id);
+        const values = {...readSaverOptions(settings)[key] ?? {}};
         const save = () => {
-            const all = read();
+            const all = readSaverOptions(settings);
             const changed = Object.fromEntries(Object.entries(values)
                 .filter(([id, v]) => options.find(o => o.id === id)?.default !== v));
             if (Object.keys(changed).length)
@@ -282,7 +284,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                     row = new Adw.SpinRow({title: esc(o.label), adjustment: adj, digits: integer ? 0 : 2});
                 } else {
                     row = new Adw.ActionRow({
-                        title: esc(o.label === o.id ? o.label.replace(/^./, c => c.toUpperCase()) : o.label),
+                        title: esc(optionLabel(o)),
                         subtitle: esc([o.lowLabel, o.highLabel].filter(Boolean).join(' ⟷ ')),
                     });
                     row.add_suffix(new Gtk.Scale({adjustment: adj, width_request: 260,
@@ -303,7 +305,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 group.add(row);
             } else if (o.type === 'select') {
                 const row = new Adw.ComboRow({
-                    title: esc(o.label === o.id ? o.label.replace(/^./, c => c.toUpperCase()) : o.label),
+                    title: esc(optionLabel(o)),
                     model: Gtk.StringList.new(o.choices.map(c => c.label)),
                     selected: Math.max(0, o.choices.findIndex(c => c.id === current)),
                 });
@@ -374,8 +376,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 value: v, label: formatDuration(v),
                 explain: () => `Runs for ${formatDuration(v)}, then the screen blanks.`,
             })),
-        ]);
-        sessionSettings.connect('changed::idle-delay', () => runTime.refresh());
+        ], [[sessionSettings, 'changed::idle-delay']]);
         lock.add(runTime);
 
         const retrigger = choiceRow(settings, 'retrigger-delay', 'Come back after dismissing', [
@@ -765,14 +766,9 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             const cmd = command.text.trim();
             if (!cmd)
                 return;
-            const [ok] = (() => {
-                try {
-                    return GLib.shell_parse_argv(cmd);
-                } catch {
-                    return [false];
-                }
-            })();
-            if (!ok) {
+            try {
+                GLib.shell_parse_argv(cmd);
+            } catch {
                 window.add_toast(new Adw.Toast({title: 'That command could not be parsed'}));
                 return;
             }
