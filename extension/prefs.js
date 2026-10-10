@@ -476,7 +476,9 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             if (adj.value !== v)
                 adj.value = v;
             value.label = `${v}%`;
-            reset.visible = v !== 100;
+            // Grey out rather than hide: hiding resized the slider under the
+            // pointer mid-drag, which flipped the value back and forth.
+            reset.sensitive = v !== 100;
         };
         adj.connect('value-changed', () => {
             // Snap to steps of 5.
