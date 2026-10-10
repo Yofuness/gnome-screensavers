@@ -34,28 +34,33 @@ function preview(settings, id) {
  * what the selected choice does, so long descriptions never get cut off.
  */
 function choiceRow(settings, key, title, choices) {
-    const row = new Adw.ComboRow({
-        title,
-        model: Gtk.StringList.new(choices.map(c => c.label)),
-        subtitle_lines: 3,
-    });
+    // An ActionRow with a separate dropdown rather than an Adw.ComboRow: the
+    // ComboRow shrinks its value label to make room for a long subtitle, while a
+    // Gtk.DropDown keeps its full width and the subtitle wraps instead.
+    const row = new Adw.ActionRow({title, subtitle_lines: 0});
+    const dropdown = Gtk.DropDown.new_from_strings(choices.map(c => c.label));
+    dropdown.valign = Gtk.Align.CENTER;
+    row.add_suffix(dropdown);
+    row.activatable_widget = dropdown;
+
     const sync = () => {
         const v = settings.get_int(key);
         let i = choices.findIndex(c => c.value === v);
         if (i < 0)
             i = 0;
-        if (row.selected !== i)
-            row.selected = i;
+        if (dropdown.selected !== i)
+            dropdown.selected = i;
         row.subtitle = choices[i].explain();
     };
-    row.connect('notify::selected', () => {
-        const c = choices[row.selected];
+    dropdown.connect('notify::selected', () => {
+        const c = choices[dropdown.selected];
         if (c && settings.get_int(key) !== c.value)
             settings.set_int(key, c.value);
         row.subtitle = c?.explain() ?? '';
     });
     settings.connect(`changed::${key}`, sync);
     sync();
+    row.refresh = sync;   // re-explain when something outside the key changes
     return row;
 }
 
@@ -350,7 +355,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 explain: () => `Runs for ${formatDuration(v)}, then the screen blanks.`,
             })),
         ]);
-        sessionSettings.connect('changed::idle-delay', () => runTime.notify('selected'));
+        sessionSettings.connect('changed::idle-delay', () => runTime.refresh());
         lock.add(runTime);
 
         const retrigger = choiceRow(settings, 'retrigger-delay', 'Come back after dismissing', [
