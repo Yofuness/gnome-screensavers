@@ -1,6 +1,8 @@
 #!/bin/bash
 # Runs the extension in a throwaway headless gnome-shell, isolated from the real
-# session: its own D-Bus, dconf database, data dirs and Wayland socket.
+# session: its own D-Bus, dconf database, data dirs and Wayland socket.  A bogus
+# XDG_SESSION_ID stops it attaching to the real logind session, which would let
+# the two shells see each other's lock/unlock.
 #
 #   tools/headless-test.sh start            start the test shell (two virtual monitors)
 #   tools/headless-test.sh call METHOD ...  call a debug D-Bus method (Lock, Preview, Key, ...)
@@ -20,8 +22,8 @@ bus() { cat "$T/bus"; }
 call() {
     local method=$1; shift
     DBUS_SESSION_BUS_ADDRESS=$(bus) gdbus call --session --dest org.gnome.Shell \
-        --object-path /local/johann/Screensavers/Debug \
-        --method "local.johann.Screensavers.Debug.$method" "$@"
+        --object-path /io/github/yofuness/Screensavers/Debug \
+        --method "io.github.yofuness.Screensavers.Debug.$method" "$@"
 }
 
 start() {
@@ -40,6 +42,7 @@ start() {
         XDG_DATA_HOME="$T/data" XDG_CONFIG_HOME="$T/config" XDG_CACHE_HOME="$T/cache" \
         XDG_RUNTIME_DIR="$RUNTIME" XDG_DATA_DIRS="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}" \
         SCREENSAVERS_DEBUG=1 GVFS_DISABLE_FUSE=1 \
+        XDG_SESSION_ID=screensavers-test-none \
         setsid dbus-run-session -- bash -c '
             echo "$DBUS_SESSION_BUS_ADDRESS" > "'"$T"'/bus"
             dconf write /org/gnome/shell/enabled-extensions "[\"'"$UUID"'\"]"

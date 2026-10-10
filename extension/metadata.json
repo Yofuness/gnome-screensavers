@@ -1,7 +1,7 @@
 {
   "uuid": "screensavers@yofuness.github.io",
   "name": "Screensavers",
-  "description": "Shows a screensaver over the lock screen until the screen blanks: the original macOS Flurry (via XScreenSaver's port) or any installed XScreenSaver hack. Requires the xscreensaver package for the screensaver programs. Runs in the unlock-dialog session mode because that is where the screensaver is shown.",
+  "description": "Run classic X11 screensavers on GNOME Wayland, shown over the lock screen until the screen blanks. Made for a love of Flurry, the screensaver from macOS: XScreenSaver's port of the original Flurry is the default, and any of its roughly 250 other screensavers (or your own program) can run instead. The X11 savers run unmodified through Xwayland and never receive input; a key press or click stops them and shows the unlock prompt.\n\nRequires the xscreensaver package (only its screensaver programs are used, not its daemon). Runs in the unlock-dialog session mode because the lock screen is where the screensaver is shown.",
   "shell-version": [
     "51"
   ],

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Test hooks, exported only when gnome-shell runs with SCREENSAVERS_DEBUG=1
 // (the isolated headless shell in tools/headless-test.sh).  Lets a script lock
 // the session, start savers, take screenshots and simulate input.
@@ -11,7 +12,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const IFACE = `
 <node>
-  <interface name="local.johann.Screensavers.Debug">
+  <interface name="io.github.yofuness.Screensavers.Debug">
     <method name="Lock"/>
     <method name="Unlock"/>
     <method name="Motion"/>
@@ -33,7 +34,7 @@ export class DebugInterface {
     constructor(extension) {
         this._ext = extension;
         this._dbus = Gio.DBusExportedObject.wrapJSObject(IFACE, this);
-        this._dbus.export(Gio.DBus.session, '/local/johann/Screensavers/Debug');
+        this._dbus.export(Gio.DBus.session, '/io/github/yofuness/Screensavers/Debug');
         const seat = global.stage.context.get_backend().get_default_seat();
         this._keyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
         this._pointer = seat.create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);

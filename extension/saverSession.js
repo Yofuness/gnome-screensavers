@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // A running screensaver: one saver process per monitor, each shown through a
 // live Clutter.Clone of its window.  Client windows are never painted on the
 // lock screen, but a clone of one is, and the saver itself never receives
@@ -11,6 +12,20 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const WINDOW_TIMEOUT_MS = 8000;
+const KILL_GRACE_MS = 1500;
+
+// Savers asked to exit but not yet gone, with the timer that force-kills them.
+// Module-level so the extension can clean them up in disable().
+const stragglers = new Map();
+
+/** Force-kill any saver still shutting down and drop its timer. */
+export function killStragglers() {
+    for (const [proc, id] of stragglers) {
+        GLib.source_remove(id);
+        proc.force_exit();
+    }
+    stragglers.clear();
+}
 
 export class SaverSession {
     /**
@@ -19,13 +34,15 @@ export class SaverSession {
      *   saver command for one monitor
      * @param {() => void} params.onDismiss  called on key press / click
      * @param {() => void} params.onFailed   called when no saver window could be shown
-     * @param {(msg: string) => void} params.log
+     * @param {(msg: string) => void} params.log   progress messages
+     * @param {(msg: string) => void} params.warn  problems
      */
-    constructor({launch, onDismiss, onFailed, log}) {
+    constructor({launch, onDismiss, onFailed, log, warn}) {
         this._launch = launch;
         this._onDismiss = onDismiss;
         this._onFailed = onFailed;
         this._log = log;
+        this._warn = warn;
         this._entries = [];
         this._stopped = false;
     }
@@ -65,7 +82,8 @@ export class SaverSession {
                     this._dismissed = true;
                     this._log('dismissed by input');
                     // Leave the filter callback before tearing down.
-                    GLib.idle_add(GLib.PRIORITY_HIGH, () => {
+                    this._dismissId = GLib.idle_add(GLib.PRIORITY_HIGH, () => {
+                        this._dismissId = 0;
                         this._onDismiss();
                         return GLib.SOURCE_REMOVE;
                     });
@@ -88,7 +106,7 @@ export class SaverSession {
         this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, WINDOW_TIMEOUT_MS, () => {
             this._timeoutId = 0;
             if (!this._entries.some(e => e.clone)) {
-                this._log('no saver window appeared in time');
+                this._warn('no saver window appeared in time');
                 this._onFailed();
             }
             return GLib.SOURCE_REMOVE;
@@ -104,7 +122,7 @@ export class SaverSession {
         try {
             proc = launcher.spawnv(argv);
         } catch (e) {
-            this._log(`failed to start ${argv.join(' ')}: ${e.message}`);
+            this._warn(`failed to start ${argv.join(' ')}: ${e.message}`);
             return;
         }
         const entry = {
@@ -246,6 +264,10 @@ export class SaverSession {
         this._stopped = true;
         if (this._timeoutId)
             GLib.source_remove(this._timeoutId);
+        this._timeoutId = 0;
+        if (this._dismissId)
+            GLib.source_remove(this._dismissId);
+        this._dismissId = 0;
         if (this._filterId) {
             Clutter.Event.remove_filter(this._filterId);
             this._filterId = 0;
@@ -260,10 +282,17 @@ export class SaverSession {
                 const proc = entry.proc;
                 proc.send_signal(15);
                 // Escalate if it ignores SIGTERM.
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
-                    if (!proc.get_if_exited() && !proc.get_if_signaled())
-                        proc.force_exit();
+                const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, KILL_GRACE_MS, () => {
+                    stragglers.delete(proc);
+                    proc.force_exit();
                     return GLib.SOURCE_REMOVE;
+                });
+                stragglers.set(proc, id);
+                proc.wait_async(null, () => {
+                    if (stragglers.get(proc) === id) {
+                        GLib.source_remove(id);
+                        stragglers.delete(proc);
+                    }
                 });
             }
         }

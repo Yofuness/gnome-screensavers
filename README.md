@@ -1,9 +1,13 @@
 # Screensavers for GNOME
 
-A GNOME Shell extension (GNOME 51, Wayland) that shows a screensaver **over the lock screen**,
-whether you lock manually (Super+L) or the session auto-locks. The default is the macOS **Flurry**
-screensaver: XScreenSaver's port of the original Flurry source, with all its presets. Any installed
-**XScreenSaver** hack (about 250 of them) can run instead, or any program you add yourself.
+Run classic **X11 screensavers on GNOME Wayland**, right over the lock screen. GNOME on Wayland has no
+screensaver support, and the XScreenSaver collection (about 250 savers) was written for X11. This
+extension runs those programs unmodified through Xwayland and shows them over the lock screen, whether
+you lock manually (Super+L) or the session auto-locks.
+
+I made this because I love **Flurry**, the screensaver that shipped with macOS. XScreenSaver includes a
+port of the original Flurry source, with all its presets, and it's the default here. Any other
+XScreenSaver hack, or any program you add yourself, can run instead.
 
 - A **key press or click** stops the saver and shows the unlock prompt. Moving the mouse doesn't.
 - The saver runs until GNOME's **Screen Blank** time (Settings ▸ Power), then the screen blanks
@@ -63,3 +67,8 @@ your real session isn't touched. It then checks that:
 - several XScreenSaver hacks render.
 
 Choose which hacks to test with `HACKS="glmatrix pipes" make test`.
+
+## License
+
+GPL-2.0-or-later, the same as GNOME Shell. See [LICENSE](LICENSE). XScreenSaver and its hacks are separate
+programs with their own licenses; this extension only launches them.

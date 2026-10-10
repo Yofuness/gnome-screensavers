@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Screensavers: shows a screensaver over the GNOME lock screen.
 //
 // GNOME starts its fade-to-black (and, through it, tells the power daemon the
@@ -12,15 +13,16 @@ import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extension
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {ScreenShield} from 'resource:///org/gnome/shell/ui/screenShield.js';
 
-import {SaverSession} from './saverSession.js';
+import {SaverSession, killStragglers} from './saverSession.js';
 import {Registry} from './registry.js';
 
 export default class ScreensaversExtension extends Extension {
     enable() {
+        this._verbose = !!GLib.getenv('SCREENSAVERS_DEBUG');
         this._settings = this.getSettings();
         this._sessionSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.session'});
         this.registry = new Registry(this, this._settings);
-        this._registryReady = this.registry.load().catch(e => this.log(`scanning savers: ${e}`));
+        this._registryReady = this.registry.load().catch(e => this.warn(`scanning savers: ${e}`));
         this._session = null;
         this._pendingFade = null;
         this._passFade = false;
@@ -36,22 +38,23 @@ export default class ScreensaversExtension extends Extension {
 
         Main.screenShield?.connectObject('locked-changed', () => this._onLockedChanged(), this);
 
-        // Lets the preferences window start a preview in the shell.
-        this._dbus = Gio.DBusExportedObject.wrapJSObject(`
-            <node><interface name="local.johann.Screensavers">
-              <method name="Preview"><arg type="s" direction="in" name="id"/></method>
-            </interface></node>`, {
-            Preview: id => this.startSaver({id: id || null}),
-        });
-        this._dbus.export(Gio.DBus.session, '/local/johann/Screensavers');
+        // The preferences window asks for a preview by writing "<saver id>#<time>"
+        // to this key; the time part makes repeated requests for one saver count.
+        this._settings.connectObject('changed::preview-request', () => {
+            const request = this._settings.get_string('preview-request');
+            const id = request.slice(0, request.lastIndexOf('#'));
+            if (id && !Main.screenShield?.locked)
+                this.startSaver({id});
+        }, this);
 
-        if (GLib.getenv('SCREENSAVERS_DEBUG')) {
+        // BEGIN DEBUG (removed from the extensions.gnome.org package by `make zip`)
+        if (this._verbose) {
             import('./debug.js').then(({DebugInterface}) => {
                 if (this._settings)
                     this._debug = new DebugInterface(this);
-            }).catch(e => this.log(`debug interface: ${e}`));
+            }).catch(e => this.warn(`debug interface: ${e}`));
         }
-        this.log('enabled');
+        // END DEBUG
     }
 
     disable() {
@@ -59,9 +62,9 @@ export default class ScreensaversExtension extends Extension {
         // locked, because we declare the unlock-dialog session mode.
         this._debug?.destroy();
         this._debug = null;
-        this._dbus?.unexport();
-        this._dbus = null;
+        this._settings.disconnectObject(this);
         this._stopSession({resumeFade: false});
+        killStragglers();
         Main.screenShield?.disconnectObject(this);
         this._injections.clear();
         this._injections = null;
@@ -70,8 +73,14 @@ export default class ScreensaversExtension extends Extension {
         this._sessionSettings = null;
     }
 
+    // Progress messages only when debugging; problems always.
     log(msg) {
-        console.log(`[screensavers] ${msg}`);
+        if (this._verbose)
+            console.log(`[screensavers] ${msg}`);
+    }
+
+    warn(msg) {
+        console.warn(`[screensavers] ${msg}`);
     }
 
     get session() {
@@ -113,7 +122,7 @@ export default class ScreensaversExtension extends Extension {
         const saverId = id ?? this.registry.choose();
         const launch = this.registry.launcher(saverId);
         if (!launch) {
-            this.log(`unknown saver "${saverId}"`);
+            this.warn(`unknown saver "${saverId}"`);
             return false;
         }
         this.log(`starting ${saverId}${onLock ? ' (lock)' : ' (preview)'}`);
@@ -121,6 +130,7 @@ export default class ScreensaversExtension extends Extension {
         this._session = new SaverSession({
             launch,
             log: m => this.log(m),
+            warn: m => this.warn(m),
             onDismiss: () => this._dismiss(),
             onFailed: () => this._stopSession({resumeFade: true}),
         });
@@ -159,7 +169,7 @@ export default class ScreensaversExtension extends Extension {
                     else
                         this._releaseCookie(cookie); // saver already gone
                 } catch (e) {
-                    this.log(`idle inhibit failed: ${e.message}`);
+                    this.warn(`idle inhibit failed: ${e.message}`);
                 }
             });
     }

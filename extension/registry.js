@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Catalogue of available savers and how to launch them.
 //
 // Saver ids:

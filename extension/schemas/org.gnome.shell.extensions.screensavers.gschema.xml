@@ -23,6 +23,11 @@
       <summary>Seconds to run before letting the screen blank</summary>
       <description>-1 follows GNOME's Screen Blank setting (org.gnome.desktop.session idle-delay); 0 runs until a key press or click.</description>
     </key>
+    <key name="preview-request" type="s">
+      <default>''</default>
+      <summary>Internal: preview request from the preferences window</summary>
+      <description>"&lt;saver id&gt;#&lt;timestamp&gt;"; writing it shows that saver until a key press or click.</description>
+    </key>
     <key name="enabled-on-lock" type="b">
       <default>true</default>
       <summary>Show the screensaver when the session locks</summary>

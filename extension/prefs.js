@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -18,10 +19,9 @@ const RUN_TIMES = [
     [3600, '1 hour'],
 ];
 
-function preview(id) {
-    Gio.DBus.session.call('org.gnome.Shell', '/local/johann/Screensavers',
-        'local.johann.Screensavers', 'Preview', new GLib.Variant('(s)', [id]),
-        null, Gio.DBusCallFlags.NONE, -1, null, null);
+// Ask the shell for a preview; it watches this key (see extension.js).
+function preview(settings, id) {
+    settings.set_string('preview-request', `${id}#${GLib.get_real_time()}`);
 }
 
 export default class ScreensaversPreferences extends ExtensionPreferences {
@@ -139,7 +139,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 tooltip_text: 'Preview (press a key or click to stop)',
                 css_classes: ['flat'],
             });
-            play.connect('clicked', () => preview(saver.id));
+            play.connect('clicked', () => preview(settings, saver.id));
             row.add_suffix(play);
 
             list.append(row);
@@ -212,7 +212,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                     css_classes: ['flat'],
                     tooltip_text: 'Preview',
                 });
-                play.connect('clicked', () => preview(`custom:${i}`));
+                play.connect('clicked', () => preview(settings, `custom:${i}`));
                 const del = new Gtk.Button({
                     icon_name: 'user-trash-symbolic',
                     valign: Gtk.Align.CENTER,
