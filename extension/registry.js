@@ -19,29 +19,6 @@ Gio._promisify(Gio.File.prototype, 'enumerate_children_async');
 Gio._promisify(Gio.File.prototype, 'query_info_async');
 Gio._promisify(Gio.FileEnumerator.prototype, 'next_files_async');
 
-function readText(path) {
-    try {
-        const [ok, bytes] = GLib.file_get_contents(path);
-        return ok ? new TextDecoder('latin1').decode(bytes) : null;
-    } catch {
-        return null;
-    }
-}
-
-function listDir(path) {
-    const names = [];
-    try {
-        const en = Gio.File.new_for_path(path).enumerate_children('standard::name',
-            Gio.FileQueryInfoFlags.NONE, null);
-        let info;
-        while ((info = en.next_file(null)))
-            names.push(info.get_name());
-    } catch {
-        // missing directory
-    }
-    return names;
-}
-
 function xmlAttrs(tag) {
     const out = {};
     for (const m of tag.matchAll(/([\w-]+)="([^"]*)"/g))
@@ -161,9 +138,9 @@ export class Registry {
     }
 
     /**
-     * Scan the installed hacks without blocking: the shell calls this once at
-     * enable() and waits for it before showing a saver.  (The preferences
-     * window, a separate process, uses the synchronous scan below.)
+     * Scan the installed hacks without blocking.  The shell calls this once at
+     * enable() and waits for it before showing a saver; the preferences window
+     * fills in its list when it completes.
      */
     async load() {
         if (this._hacks)
@@ -217,29 +194,9 @@ export class Registry {
         this._hacks = hacks;
     }
 
+    /** Installed hacks; empty until load() has finished. */
     _scanHacks() {
-        if (this._hacks)
-            return this._hacks;
-        const hackDir = HACK_DIRS.find(d => GLib.file_test(d, GLib.FileTest.IS_DIR));
-        const hacks = [];
-        if (hackDir) {
-            for (const configDir of CONFIG_DIRS) {
-                for (const file of listDir(configDir)) {
-                    if (!file.endsWith('.xml'))
-                        continue;
-                    const info = parseHackConfig(readText(`${configDir}/${file}`) ?? '');
-                    if (!info?.name)
-                        continue;
-                    const exe = `${hackDir}/${info.name}`;
-                    if (!GLib.file_test(exe, GLib.FileTest.IS_EXECUTABLE))
-                        continue;
-                    hacks.push({...info, exe});
-                }
-            }
-        }
-        hacks.sort((a, b) => a.label.localeCompare(b.label));
-        this._hacks = hacks;
-        return hacks;
+        return this._hacks ?? [];
     }
 
     _customs() {

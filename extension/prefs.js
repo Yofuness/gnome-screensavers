@@ -135,83 +135,88 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const list = new Gtk.ListBox({selection_mode: Gtk.SelectionMode.NONE, css_classes: ['boxed-list']});
         group.add(list);
 
-        const savers = registry.list();
-        if (!savers.length) {
-            group.description = 'No screensavers found. Install the xscreensaver package ' +
-                '(e.g. “sudo pacman -S xscreensaver”), then reopen this window.';
-        }
         const favourites = () => new Set(settings.get_strv('favorites'));
         let radioGroup = null;
         const radios = new Map();
 
-        for (const saver of savers) {
-            const row = new Adw.ActionRow({
-                title: esc(saver.name),
-                subtitle: esc(`${saver.group} · ${saver.description}`),
-                subtitle_lines: 2,
-            });
-            row._saver = saver;
-
-            const radio = new Gtk.CheckButton({valign: Gtk.Align.CENTER});
-            if (radioGroup)
-                radio.set_group(radioGroup);
-            else
-                radioGroup = radio;
-            radio.connect('toggled', () => {
-                if (radio.active && settings.get_string('saver') !== saver.id)
-                    settings.set_string('saver', saver.id);
-            });
-            radios.set(saver.id, radio);
-            row.add_prefix(radio);
-            row.activatable_widget = radio;
-
-            const star = new Gtk.ToggleButton({
-                icon_name: 'starred-symbolic',
-                valign: Gtk.Align.CENTER,
-                tooltip_text: 'Include in random rotation',
-                css_classes: ['flat'],
-                active: favourites().has(saver.id),
-            });
-            star.connect('toggled', () => {
-                const favs = favourites();
-                if (star.active)
-                    favs.add(saver.id);
-                else
-                    favs.delete(saver.id);
-                settings.set_strv('favorites', [...favs]);
-            });
-            row.add_suffix(star);
-
-            if (registry.options(saver.id).length) {
-                const gear = new Gtk.Button({
-                    icon_name: 'emblem-system-symbolic',
-                    valign: Gtk.Align.CENTER,
-                    tooltip_text: 'Settings for this screensaver',
-                    css_classes: ['flat'],
-                });
-                gear.connect('clicked', () => this._openOptions(settings, registry, saver, window));
-                row.add_suffix(gear);
+        // The saver list is read from disk asynchronously; fill it in when ready.
+        const populate = () => {
+            const savers = registry.list();
+            if (!savers.length) {
+                group.description = 'No screensavers found. Install the xscreensaver package ' +
+                    '(e.g. “sudo pacman -S xscreensaver”), then reopen this window.';
             }
 
-            const play = new Gtk.Button({
-                icon_name: 'media-playback-start-symbolic',
-                valign: Gtk.Align.CENTER,
-                tooltip_text: 'Preview (press a key or click to stop)',
-                css_classes: ['flat'],
-            });
-            play.connect('clicked', () => preview(settings, saver.id));
-            row.add_suffix(play);
+            for (const saver of savers) {
+                const row = new Adw.ActionRow({
+                    title: esc(saver.name),
+                    subtitle: esc(`${saver.group} · ${saver.description}`),
+                    subtitle_lines: 2,
+                });
+                row._saver = saver;
 
-            list.append(row);
-        }
+                const radio = new Gtk.CheckButton({valign: Gtk.Align.CENTER});
+                if (radioGroup)
+                    radio.set_group(radioGroup);
+                else
+                    radioGroup = radio;
+                radio.connect('toggled', () => {
+                    if (radio.active && settings.get_string('saver') !== saver.id)
+                        settings.set_string('saver', saver.id);
+                });
+                radios.set(saver.id, radio);
+                row.add_prefix(radio);
+                row.activatable_widget = radio;
+
+                const star = new Gtk.ToggleButton({
+                    icon_name: 'starred-symbolic',
+                    valign: Gtk.Align.CENTER,
+                    tooltip_text: 'Include in random rotation',
+                    css_classes: ['flat'],
+                    active: favourites().has(saver.id),
+                });
+                star.connect('toggled', () => {
+                    const favs = favourites();
+                    if (star.active)
+                        favs.add(saver.id);
+                    else
+                        favs.delete(saver.id);
+                    settings.set_strv('favorites', [...favs]);
+                });
+                row.add_suffix(star);
+
+                if (registry.options(saver.id).length) {
+                    const gear = new Gtk.Button({
+                        icon_name: 'emblem-system-symbolic',
+                        valign: Gtk.Align.CENTER,
+                        tooltip_text: 'Settings for this screensaver',
+                        css_classes: ['flat'],
+                    });
+                    gear.connect('clicked', () => this._openOptions(settings, registry, saver, window));
+                    row.add_suffix(gear);
+                }
+
+                const play = new Gtk.Button({
+                    icon_name: 'media-playback-start-symbolic',
+                    valign: Gtk.Align.CENTER,
+                    tooltip_text: 'Preview (press a key or click to stop)',
+                    css_classes: ['flat'],
+                });
+                play.connect('clicked', () => preview(settings, saver.id));
+                row.add_suffix(play);
+
+                list.append(row);
+            }
+            syncSelected();
+        };
 
         const syncSelected = () => {
             const radio = radios.get(settings.get_string('saver'));
             if (radio && !radio.active)
                 radio.active = true;
         };
-        syncSelected();
         settings.connect('changed::saver', syncSelected);
+        registry.load().then(populate).catch(e => console.warn(`[screensavers] ${e.message}`));
 
         list.set_filter_func(row => {
             const q = search.text.trim().toLowerCase();

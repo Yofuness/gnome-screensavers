@@ -72,8 +72,13 @@ export default class ScreensaversExtension extends Extension {
     }
 
     disable() {
-        // Runs on logout and when the extension is turned off; never while
-        // locked, because we declare the unlock-dialog session mode.
+        // This extension uses the unlock-dialog session mode because its whole
+        // purpose is to show a screensaver on the lock screen, so it must stay
+        // enabled while the session is locked.  disable() therefore runs only on
+        // logout or when the user turns the extension off, never on lock/unlock.
+        // Everything it set up is torn down here: the running saver and its
+        // processes, timers, the idle inhibitor, the input filter and the
+        // ScreenShield override.
         this._debug?.destroy();
         this._debug = null;
         this._settings.disconnectObject(this);
@@ -214,8 +219,8 @@ export default class ScreensaversExtension extends Extension {
                     // A test can't hand over to GNOME's fade; say what would happen.
                     this.log('test run time over');
                     this._session?.showNotice('Your screen would blank now');
-                    this._runTimerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
-                        this._runTimerId = 0;
+                    this._noticeTimerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
+                        this._noticeTimerId = 0;
                         this._stopSession({resumeFade: false, reason: 'run-time'});
                         return GLib.SOURCE_REMOVE;
                     });
@@ -344,6 +349,10 @@ export default class ScreensaversExtension extends Extension {
         if (this._rotateId) {
             GLib.source_remove(this._rotateId);
             this._rotateId = 0;
+        }
+        if (this._noticeTimerId) {
+            GLib.source_remove(this._noticeTimerId);
+            this._noticeTimerId = 0;
         }
         if (this._session)
             this._logRun(this._run, reason);

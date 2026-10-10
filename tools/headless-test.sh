@@ -328,7 +328,9 @@ run() {
     [ -s "$log" ] && tail -n 3 "$log" | sed 's/^/     /'
 
     echo "== overlay size changes live"
-    call Preview 'flurry:classic' >/dev/null; sleep 4
+    # glmatrix: its green rain can't be mistaken for the white overlay text
+    # (Flurry's white-hot core sometimes drifts into the measured corner).
+    call Preview 'xscreensaver:glmatrix' >/dev/null; sleep 4
     shot "$T/shots/size100.png"
     set_key overlay-scale 200; sleep 1.5
     shot "$T/shots/size200.png"

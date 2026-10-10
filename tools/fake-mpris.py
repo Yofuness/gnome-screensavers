@@ -5,6 +5,7 @@
 Owns org.mpris.MediaPlayer2.fakeplayer on the session bus, reports a playing
 track, and appends the name of every Player method called to the file given
 as the first argument (so the tests can check media keys reached it).
+Optional further arguments override the title, artist, album and player name.
 """
 import sys
 
@@ -28,6 +29,7 @@ XML = """
 """
 
 calls_file = sys.argv[1]
+TITLE, ARTIST, ALBUM, IDENTITY = (sys.argv[2:6] + ["Test Track", "Test Artist", "Test Album", "Fake Player"][len(sys.argv[2:6]):])
 status = "Playing"
 
 
@@ -44,14 +46,14 @@ def method_call(conn, sender, path, iface, method, params, invocation):
 
 def get_property(conn, sender, path, iface, prop):
     if prop == "Identity":
-        return GLib.Variant("s", "Fake Player")
+        return GLib.Variant("s", IDENTITY)
     if prop == "PlaybackStatus":
         return GLib.Variant("s", status)
     if prop == "Metadata":
         return GLib.Variant("a{sv}", {
-            "xesam:title": GLib.Variant("s", "Test Track"),
-            "xesam:artist": GLib.Variant("as", ["Test Artist"]),
-            "xesam:album": GLib.Variant("s", "Test Album"),
+            "xesam:title": GLib.Variant("s", TITLE),
+            "xesam:artist": GLib.Variant("as", [ARTIST]),
+            "xesam:album": GLib.Variant("s", ALBUM),
         })
     return None
 
