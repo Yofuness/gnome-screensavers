@@ -91,6 +91,7 @@ export class SaverSession {
                 showClock: !!this._info.showClock,
                 showMedia: !!this._info.showMedia,
                 media: this._media,
+                scale: this._info.scale ?? 1,
             });
             this._overlay.add_child(this._infoBox.actor);
         }
@@ -301,6 +302,25 @@ export class SaverSession {
     }
 
     /** Snapshot of what is running, for the debug interface. */
+    /** A centred message on the primary monitor (used by "Test lock screen"). */
+    showNotice(text) {
+        if (!this._overlay)
+            return;
+        const m = Main.layoutManager.primaryMonitor;
+        const label = new St.Label({text, style_class: 'screensavers-notice', opacity: 0});
+        this._overlay.add_child(label);
+        const [, w] = label.get_preferred_width(-1);
+        const [, h] = label.get_preferred_height(-1);
+        label.set_position(m.x + Math.round((m.width - w) / 2), m.y + Math.round((m.height - h) / 2));
+        label.ease({opacity: 255, duration: 400});
+    }
+
+    /** Resize the clock/media overlay of the running saver. */
+    setInfoScale(scale) {
+        this._info.scale = scale;
+        this._infoBox?.setScale(scale);
+    }
+
     /** Title of the track the overlay would show, for the debug interface. */
     mediaTitle() {
         return this._media?.current()?.title ?? null;

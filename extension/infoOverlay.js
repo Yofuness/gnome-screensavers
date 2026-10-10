@@ -11,6 +11,11 @@ import St from 'gi://St';
 const MPRIS_PREFIX = 'org.mpris.MediaPlayer2.';
 const DRIFT_SECONDS = 120;   // nudge the overlay around to avoid burn-in
 const DRIFT_PIXELS = 40;
+const MARGIN_X = 48;
+const MARGIN_Y = 40;
+
+// Sizes at 100%; scaled by setting fonts directly so text stays sharp at any size.
+const BASE = {time: 64, date: 16, title: 13, artist: 11, player: 9, art: 56, mediaGap: 28, artGap: 14};
 
 /** Tracks MPRIS players on the session bus and picks the one that matters. */
 export class MediaWatcher {
@@ -129,14 +134,15 @@ export class MediaWatcher {
 
 /** The clock + now-playing box for the primary monitor. */
 export class InfoOverlay {
-    constructor({monitor, showClock, showMedia, media}) {
+    constructor({monitor, showClock, showMedia, media, scale = 1}) {
         this._monitor = monitor;
         this._media = media;
+        this._scale = scale;
         this.actor = new St.BoxLayout({
             style_class: 'screensavers-info',
             orientation: Clutter.Orientation.VERTICAL,
-            x: monitor.x + 48,
-            y: monitor.y + 40,
+            x: monitor.x + Math.round(MARGIN_X * scale),
+            y: monitor.y + Math.round(MARGIN_Y * scale),
         });
 
         if (showClock) {
@@ -165,14 +171,33 @@ export class InfoOverlay {
             this.syncMedia();
         }
 
+        this.setScale(scale);
         this._driftId = GLib.timeout_add_seconds(GLib.PRIORITY_LOW, DRIFT_SECONDS, () => {
+            const s = this._scale;
             this.actor.ease({
-                x: monitor.x + 48 + Math.round(Math.random() * DRIFT_PIXELS),
-                y: monitor.y + 40 + Math.round(Math.random() * DRIFT_PIXELS),
+                x: monitor.x + Math.round((MARGIN_X + Math.random() * DRIFT_PIXELS) * s),
+                y: monitor.y + Math.round((MARGIN_Y + Math.random() * DRIFT_PIXELS) * s),
                 duration: 4000,
             });
             return GLib.SOURCE_CONTINUE;
         });
+    }
+
+    /** Resize the overlay (1 = 100%); safe to call while it is on screen. */
+    setScale(scale) {
+        this._scale = scale;
+        const pt = n => `font-size: ${(n * scale).toFixed(1)}pt;`;
+        const px = n => Math.round(n * scale);
+        this._time?.set_style(pt(BASE.time));
+        this._date?.set_style(pt(BASE.date));
+        this._title?.set_style(pt(BASE.title));
+        this._artist?.set_style(pt(BASE.artist));
+        this._player?.set_style(pt(BASE.player));
+        if (this._art)
+            this._art.icon_size = px(BASE.art);
+        this._mediaBox?.set_style(`margin-top: ${px(BASE.mediaGap)}px; spacing: ${px(BASE.artGap)}px;`);
+        this.actor.remove_all_transitions();
+        this.actor.set_position(this._monitor.x + px(MARGIN_X), this._monitor.y + px(MARGIN_Y));
     }
 
     _syncClock() {

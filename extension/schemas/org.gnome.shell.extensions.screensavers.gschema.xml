@@ -46,8 +46,18 @@
       <description>Only while the screen is still locked.</description>
     </key>
     <key name="log-history" type="b">
-      <default>false</default>
+      <default>true</default>
       <summary>Keep a local log of when each screensaver ran</summary>
+    </key>
+    <key name="history-limit" type="i">
+      <range min="100" max="1000000"/>
+      <default>2000</default>
+      <summary>How many runs the history keeps (newest first)</summary>
+    </key>
+    <key name="overlay-scale" type="i">
+      <range min="50" max="200"/>
+      <default>100</default>
+      <summary>Size of the clock and now-playing overlay, in percent</summary>
     </key>
     <key name="preview-request" type="s">
       <default>''</default>

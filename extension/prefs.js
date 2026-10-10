@@ -9,6 +9,8 @@ import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/ex
 import {Registry} from './registry.js';
 import {historyFile, parseHistory} from './history.js';
 
+Gio._promisify(Gio.File.prototype, 'load_contents_async');
+
 const esc = s => GLib.markup_escape_text(String(s), -1);
 
 function formatDuration(seconds) {
@@ -319,6 +321,20 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         settings.bind('enabled-on-lock', onLock, 'active', Gio.SettingsBindFlags.DEFAULT);
         lock.add(onLock);
 
+        const test = new Adw.ActionRow({
+            title: 'Test lock screen',
+            subtitle: 'Runs the screensaver exactly as it would when locked (your choice or a random pick, ' +
+                'overlay, run time, rotation) without locking. Press a key or click to stop. ' +
+                '“Come back after dismissing” is not simulated.',
+            subtitle_lines: 4,
+        });
+        const testButton = new Gtk.Button({label: 'Test', valign: Gtk.Align.CENTER,
+            css_classes: ['suggested-action']});
+        testButton.connect('clicked', () => preview(settings, '@test'));
+        test.add_suffix(testButton);
+        test.activatable_widget = testButton;
+        lock.add(test);
+
         const blankText = () => {
             const s = sessionSettings.get_uint('idle-delay');
             return s ? formatDuration(s) : 'Never';
@@ -341,9 +357,8 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             {value: 0, label: 'Never',
                 explain: () => 'After a key press or click, the lock screen stays until you unlock.'},
             ...[15, 30, 60, 120, 300].map(v => ({
-                value: v, label: `After ${formatDuration(v)}`,
-                explain: () => `If the lock screen is left untouched for ${formatDuration(v)} after ` +
-                    'dismissing, the screensaver returns.',
+                value: v, label: formatDuration(v),
+                explain: () => `Returns after ${formatDuration(v)} untouched on the lock screen.`,
             })),
         ]);
         lock.add(retrigger);
@@ -381,6 +396,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         });
         settings.bind('show-media', media, 'active', Gio.SettingsBindFlags.DEFAULT);
         overlay.add(media);
+        overlay.add(this._sizeRow(settings));
 
         const history = new Adw.PreferencesGroup({title: 'History'});
         page.add(history);
@@ -391,7 +407,89 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         settings.bind('log-history', log, 'active', Gio.SettingsBindFlags.DEFAULT);
         history.add(log);
 
+        const limit = new Adw.SpinRow({
+            title: 'Runs to keep',
+            adjustment: new Gtk.Adjustment({lower: 100, upper: 1000000, step_increment: 100,
+                page_increment: 1000}),
+        });
+        settings.bind('history-limit', limit, 'value', Gio.SettingsBindFlags.DEFAULT);
+        settings.bind('log-history', limit, 'sensitive', Gio.SettingsBindFlags.GET);
+        const syncLimit = () => {
+            // About 150 bytes per run.
+            const bytes = settings.get_int('history-limit') * 150;
+            limit.subtitle = `The newest ones are kept; up to about ${GLib.format_size(bytes)} on disk`;
+        };
+        settings.connect('changed::history-limit', syncLimit);
+        syncLimit();
+        history.add(limit);
+
         return page;
+    }
+
+    // Overlay size: a slider with marked steps, the current value, a reset
+    // button and a preview.  A running preview resizes live as it moves.
+    _sizeRow(settings) {
+        const row = new Adw.ActionRow({
+            title: 'Size',
+            subtitle: 'Drag while a preview runs to see the change live',
+        });
+        const adj = new Gtk.Adjustment({lower: 50, upper: 200, step_increment: 5, page_increment: 25});
+        const scale = new Gtk.Scale({
+            adjustment: adj,
+            width_request: 240,
+            valign: Gtk.Align.CENTER,
+            draw_value: false,
+            round_digits: 0,
+        });
+        for (const mark of [50, 100, 150, 200])
+            scale.add_mark(mark, Gtk.PositionType.BOTTOM, `${mark}%`);
+        scale.add_mark(75, Gtk.PositionType.BOTTOM, null);
+        const value = new Gtk.Label({width_chars: 5, xalign: 1, css_classes: ['numeric']});
+        const reset = new Gtk.Button({
+            icon_name: 'edit-undo-symbolic',
+            valign: Gtk.Align.CENTER,
+            tooltip_text: 'Back to 100%',
+            css_classes: ['flat'],
+        });
+        const play = new Gtk.Button({
+            icon_name: 'media-playback-start-symbolic',
+            valign: Gtk.Align.CENTER,
+            tooltip_text: 'Preview the selected screensaver',
+            css_classes: ['flat'],
+        });
+
+        const sync = () => {
+            const v = settings.get_int('overlay-scale');
+            if (adj.value !== v)
+                adj.value = v;
+            value.label = `${v}%`;
+            reset.visible = v !== 100;
+        };
+        adj.connect('value-changed', () => {
+            // Snap to steps of 5.
+            const v = Math.round(adj.value / 5) * 5;
+            if (settings.get_int('overlay-scale') !== v)
+                settings.set_int('overlay-scale', v);
+            value.label = `${v}%`;
+        });
+        reset.connect('clicked', () => settings.set_int('overlay-scale', 100));
+        play.connect('clicked', () => preview(settings, settings.get_string('saver')));
+        settings.connect('changed::overlay-scale', sync);
+        sync();
+
+        // Nothing to size when both parts of the overlay are off.
+        const syncSensitive = () => {
+            row.sensitive = settings.get_boolean('show-clock') || settings.get_boolean('show-media');
+        };
+        settings.connect('changed::show-clock', syncSensitive);
+        settings.connect('changed::show-media', syncSensitive);
+        syncSensitive();
+
+        row.add_suffix(value);
+        row.add_suffix(scale);
+        row.add_suffix(reset);
+        row.add_suffix(play);
+        return row;
     }
 
     // ── History page ────────────────────────────────────────────────────
@@ -425,13 +523,20 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         let days = 30;
         let entries = [];
 
-        const load = () => {
+        // Read without blocking the window; a large log can take a moment.
+        let loadId = 0;
+        const load = async () => {
+            const id = ++loadId;
+            let result = [];
             try {
-                const [, bytes] = file.load_contents(null);
-                entries = parseHistory(new TextDecoder().decode(bytes));
+                const [bytes] = await file.load_contents_async(null);
+                result = parseHistory(new TextDecoder().decode(bytes));
             } catch {
-                entries = [];
+                result = [];
             }
+            if (id === loadId)
+                entries = result;
+            return id === loadId;
         };
 
         const render = () => {
@@ -496,7 +601,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                     const row = new Adw.ActionRow({
                         title: esc(e.name ?? e.id),
                         subtitle: esc(`${fmtTime(e.start)} – ${fmtTime(e.end)} · ${
-                            formatDuration((e.end - e.start) / 1000)} · ${why}${e.lock ? '' : ' · preview'}`),
+                            formatDuration((e.end - e.start) / 1000)} · ${why}${e.test ? ' · test' : e.lock ? '' : ' · preview'}`),
                     });
                     row.add_prefix(new Gtk.Image({icon_name: icon, tooltip_text: why}));
                     g.add(row);
@@ -519,8 +624,10 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         };
 
         const reload = () => {
-            load();
-            render();
+            load().then(current => {
+                if (current)
+                    render();
+            });
         };
         refresh.connect('clicked', reload);
         search.connect('search-changed', render);

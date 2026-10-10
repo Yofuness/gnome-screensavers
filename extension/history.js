@@ -6,8 +6,8 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
-const MAX_LINES = 2000;
-const KEEP_LINES = 1500;
+// Trim only once the file is this much over the limit, so the full rewrite is rare.
+const HEADROOM = 1.25;
 
 Gio._promisify(Gio.File.prototype, 'append_to_async');
 Gio._promisify(Gio.File.prototype, 'load_contents_async');
@@ -38,10 +38,15 @@ export function parseHistory(text) {
 }
 
 export class HistoryWriter {
-    constructor(uuid) {
+    /**
+     * @param {string} uuid
+     * @param {() => number} getLimit  how many runs to keep (read on every write)
+     */
+    constructor(uuid, getLimit) {
         this._file = historyFile(uuid);
+        this._getLimit = getLimit;
         this._queue = Promise.resolve();
-        this._appended = 0;
+        this._lines = null;   // line count, read from the file once
     }
 
     /** Append one run: {saver, name, start, end, ended, lock}.  Never throws. */
@@ -62,19 +67,36 @@ export class HistoryWriter {
         const stream = await this._file.append_to_async(Gio.FileCreateFlags.PRIVATE, GLib.PRIORITY_LOW, null);
         await stream.write_bytes_async(new GLib.Bytes(new TextEncoder().encode(line)), GLib.PRIORITY_LOW, null);
         await stream.close_async(GLib.PRIORITY_LOW, null);
-        // Check the size now and then rather than on every write.
-        if (++this._appended % 50 === 0)
-            await this._trim();
+
+        // Count the file's lines once, then keep a running count.
+        if (this._lines === null)
+            this._lines = (await this._readLines()).length;
+        else
+            this._lines++;
+        const limit = Math.max(1, this._getLimit());
+        if (this._lines > limit * HEADROOM)
+            await this._trim(limit);
     }
 
-    async _trim() {
+    async _readLines() {
         const [bytes] = await this._file.load_contents_async(null);
-        const lines = new TextDecoder().decode(bytes).split('\n').filter(l => l.trim());
-        if (lines.length <= MAX_LINES)
-            return;
-        const kept = `${lines.slice(-KEEP_LINES).join('\n')}\n`;
-        await this._file.replace_contents_async(new TextEncoder().encode(kept), null, false,
-            Gio.FileCreateFlags.PRIVATE, null);
+        return new TextDecoder().decode(bytes).split('\n').filter(l => l.trim());
+    }
+
+    // Keep the newest `limit` runs.
+    async _trim(limit) {
+        const lines = await this._readLines();
+        if (lines.length > limit) {
+            const kept = `${lines.slice(-limit).join('\n')}\n`;
+            await this._file.replace_contents_async(new TextEncoder().encode(kept), null, false,
+                Gio.FileCreateFlags.PRIVATE, null);
+        }
+        this._lines = Math.min(lines.length, limit);
+    }
+
+    /** Recount on the next write (the limit changed, so it may need trimming). */
+    recount() {
+        this._lines = null;
     }
 
     /** Wait for queued writes (used when the extension is disabled). */

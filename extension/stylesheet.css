@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* Clock and now-playing overlay shown over the screensaver. */
+/* Clock and now-playing overlay shown over the screensaver.
+   Sizes and spacing are set from infoOverlay.js so they can be scaled. */
 
 .screensavers-info {
   color: rgba(255, 255, 255, 0.85);
@@ -8,20 +9,13 @@
 }
 
 .screensavers-time {
-  font-size: 64pt;
   font-weight: 300;
   font-feature-settings: "tnum";
 }
 
 .screensavers-date {
-  font-size: 16pt;
   font-weight: 500;
   color: rgba(255, 255, 255, 0.7);
-}
-
-.screensavers-media {
-  margin-top: 28px;
-  spacing: 14px;
 }
 
 .screensavers-art {
@@ -30,16 +24,21 @@
 }
 
 .screensavers-title {
-  font-size: 13pt;
   font-weight: bold;
 }
 
 .screensavers-artist {
-  font-size: 11pt;
   color: rgba(255, 255, 255, 0.75);
 }
 
 .screensavers-player {
-  font-size: 9pt;
   color: rgba(255, 255, 255, 0.5);
+}
+
+.screensavers-notice {
+  font-size: 22pt;
+  color: white;
+  background-color: rgba(0, 0, 0, 0.75);
+  border-radius: 16px;
+  padding: 18px 32px;
 }

@@ -93,8 +93,11 @@ a, ca = load(sys.argv[1])
 b, cb = load(sys.argv[2])
 step = 97
 mean = sum(a[i] for i in range(0, len(a), step)) / (len(a) / step)
-diff = sum(abs(a[i] - b[i]) for i in range(0, min(len(a), len(b)), step)) / (len(a) / step)
-print(f"{mean:.2f} {diff:.2f}")
+# Count clearly changed pixels at full resolution: sparse savers (glmatrix)
+# change few pixels, which an average would hide.
+n = min(len(a), len(b))
+changed = sum(1 for i in range(1, n, ca) if abs(a[i] - b[i]) > 40)
+print(f"{mean:.2f} {changed}")
 EOF
 }
 
@@ -128,6 +131,39 @@ sys.exit(0 if on > off * 1.2 else 1)
 EOF
 }
 
+# bright_extent FILE: width of the lit area in the top-left of monitor 0.
+bright_extent() {
+    python3 -I - "$1" <<'EOF'
+import sys
+import gi
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf
+pb = GdkPixbuf.Pixbuf.new_from_file(sys.argv[1])
+px, n, rs = pb.get_pixels(), pb.get_n_channels(), pb.get_rowstride()
+right = 0
+for y in range(0, 500, 2):
+    for x in range(0, 1400, 2):
+        o = y * rs + x * n
+        if min(px[o], px[o + 1], px[o + 2]) > 150:   # white-ish text, not coloured saver
+            right = max(right, x)
+print(right)
+EOF
+}
+
+# centre_lit FILE: something light sits in the middle of monitor 0.
+centre_lit() {
+    python3 -I - "$1" <<'EOF'
+import sys
+import gi
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf
+pb = GdkPixbuf.Pixbuf.new_from_file(sys.argv[1]).new_subpixbuf(760, 500, 400, 80)
+px, n, rs = pb.get_pixels(), pb.get_n_channels(), pb.get_rowstride()
+white = sum(1 for y in range(80) for x in range(400) if min(px[y*rs+x*n:y*rs+x*n+3]) > 200)
+sys.exit(0 if white > 200 else 1)
+EOF
+}
+
 shown_count() {
     call Status | grep -o '"shown":true' | wc -l
 }
@@ -142,9 +178,9 @@ expect_animating() {
     local S="$T/shots" tag; tag=$(echo "$1" | tr -c 'a-zA-Z0-9\n' '_')
     shot "$S/$tag-1.png"; sleep 2; shot "$S/$tag-2.png"
     read -r mean diff < <(analyze "$S/$tag-1.png" "$S/$tag-2.png" 2>/dev/null)
-    echo "     brightness=$mean change=$diff"
+    echo "     brightness=$mean changed_pixels=$diff"
     check "$1: screen not black" "awk 'BEGIN{exit !($mean > 1)}'"
-    check "$1: animating" "awk 'BEGIN{exit !($diff > 0.2)}'"
+    check "$1: animating" "[ $diff -gt 1000 ]"
 }
 
 FLURRY='/usr/lib/xscreensaver/flurry --preset'
@@ -273,7 +309,6 @@ run() {
 
     echo "== re-trigger after dismissing on the lock screen"
     set_key retrigger-delay 3
-    set_key log-history true
     call Lock >/dev/null; sleep 4
     call Key >/dev/null; sleep 1.5
     check "dismissed" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
@@ -291,6 +326,51 @@ run() {
     check "records a key dismissal" "grep -q '\"ended\":\"key\"' '$log'"
     check "records the saver name" "grep -q '\"name\":\"Flurry (Classic)\"' '$log'"
     [ -s "$log" ] && tail -n 3 "$log" | sed 's/^/     /'
+
+    echo "== overlay size changes live"
+    call Preview 'flurry:classic' >/dev/null; sleep 4
+    shot "$T/shots/size100.png"
+    set_key overlay-scale 200; sleep 1.5
+    shot "$T/shots/size200.png"
+    set_key overlay-scale 50; sleep 1.5
+    shot "$T/shots/size50.png"
+    call Stop >/dev/null; sleep 2
+    set_key overlay-scale 100
+    local w100 w200 w50
+    w100=$(bright_extent "$T/shots/size100.png"); w200=$(bright_extent "$T/shots/size200.png"); w50=$(bright_extent "$T/shots/size50.png")
+    echo "     overlay width: 50%=$w50 100%=$w100 200%=$w200"
+    check "200% is clearly bigger" "[ $w200 -gt \$(( w100 * 3 / 2 )) ]"
+    check "50% is clearly smaller" "[ $w50 -lt \$(( w100 * 3 / 4 )) ]"
+
+    echo "== history limit trims to the newest runs"
+    local log="$T/data/$UUID/history.jsonl"
+    python3 -c "
+import json
+with open('$log', 'w') as f:
+    for i in range(130):
+        f.write(json.dumps({'id': 'seed', 'name': 'Seed %d' % i, 'start': i, 'end': i + 1, 'ended': 'key', 'lock': True}) + '\n')
+"
+    set_key history-limit 100; sleep 1
+    call Preview 'flurry:fire' >/dev/null; sleep 3
+    call Stop >/dev/null; sleep 2
+    echo "     lines after trim: $(wc -l < "$log")"
+    check "trimmed to 100 runs" "[ \$(wc -l < '$log') -eq 100 ]"
+    check "oldest runs dropped" "! grep -q '\"Seed 0\"' '$log'"
+    check "newest run kept" "tail -n1 '$log' | grep -q 'flurry:fire'"
+    set_key history-limit 2000
+
+    echo "== test lock screen"
+    set_key run-time 5
+    set_key preview-request "'@test#1'"; sleep 3
+    check "test saver running" "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]"
+    sleep 3.5
+    shot "$T/shots/test-notice.png"
+    check "notice shown at run time (centre lit)" "centre_lit '$T/shots/test-notice.png'"
+    sleep 3.5
+    check "test stopped after the notice" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
+    check "never locked" "! is_locked"
+    check "history marks it as a test" "tail -n1 '$log' | grep -q '\"test\":true'"
+    set_key run-time -1
 
     if grep -q "JS ERROR" "$T/shell.log"; then
         echo "  FAIL JS errors in log:"; grep -A3 "JS ERROR" "$T/shell.log" | head -20; FAILED=1

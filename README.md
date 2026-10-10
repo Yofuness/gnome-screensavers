@@ -16,12 +16,14 @@ XScreenSaver hack, or any program you add yourself, can run instead.
 - Each monitor runs its own copy of the saver.
 - **Per-screensaver settings**: the ⚙ button next to a saver opens its options (speed, density,
   colours and so on), generated from XScreenSaver's own config files.
-- **Clock and now playing** in the top-left corner of the primary monitor. Media keys
-  (play/pause/next/previous) control your player without stopping the screensaver.
+- **Clock and now playing** in the top-left corner of the primary monitor, resizable from 50% to 200%.
+  Media keys (play/pause/next/previous) control your player without stopping the screensaver.
 - **Rotation**: switch to another random screensaver every few minutes.
 - **Comes back** after you dismiss it, once the lock screen has been left alone for a set time.
-- **History** (off by default): a local log of which screensaver ran when, browsable in the settings
-  window.
+- **History**: a local log of which screensaver ran when, browsable in the settings window. Keeps the
+  newest 2000 runs by default (configurable up to 1,000,000); can be turned off.
+- **Test lock screen**: run the whole lock-screen experience (random pick, overlay, run time,
+  rotation) without locking.
 
 ## Install
 

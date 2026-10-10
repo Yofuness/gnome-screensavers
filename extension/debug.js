@@ -26,6 +26,7 @@ const IFACE = `
       <arg type="d" direction="in" name="x"/>
       <arg type="d" direction="in" name="y"/>
     </method>
+    <method name="Scroll"><arg type="i" direction="in" name="steps"/></method>
     <method name="Screenshot">
       <arg type="s" direction="in" name="path"/>
       <arg type="b" direction="out" name="ok"/>
@@ -101,6 +102,16 @@ export class DebugInterface {
         this._pointer.notify_absolute_motion(t, x, y);
         this._pointer.notify_button(t + 1000, Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
         this._pointer.notify_button(t + 2000, Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+    }
+
+    // Mouse wheel at the pointer: positive scrolls down.
+    Scroll(steps) {
+        const t = GLib.get_monotonic_time();
+        for (let i = 0; i < Math.abs(steps); i++) {
+            this._pointer.notify_discrete_scroll(t + i * 1000,
+                steps > 0 ? Clutter.ScrollDirection.DOWN : Clutter.ScrollDirection.UP,
+                Clutter.ScrollSource.WHEEL);
+        }
     }
 
     ScreenshotAsync([path], invocation) {
