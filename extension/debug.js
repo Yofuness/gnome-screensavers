@@ -20,7 +20,12 @@ const IFACE = `
     <method name="Preview"><arg type="s" direction="in" name="id"/></method>
     <method name="Stop"/>
     <method name="Key"/>
+    <method name="MediaKey"/>
     <method name="Click"/>
+    <method name="ClickAt">
+      <arg type="d" direction="in" name="x"/>
+      <arg type="d" direction="in" name="y"/>
+    </method>
     <method name="Screenshot">
       <arg type="s" direction="in" name="path"/>
       <arg type="b" direction="out" name="ok"/>
@@ -78,10 +83,24 @@ export class DebugInterface {
         this._keyboard.notify_keyval(t + 1000, Clutter.KEY_Shift_L, Clutter.KeyState.RELEASED);
     }
 
+    MediaKey() {
+        const t = GLib.get_monotonic_time();
+        // Raw evdev code (KEY_PLAYPAUSE), as a real keyboard sends it.
+        this._keyboard.notify_key(t, 164, Clutter.KeyState.PRESSED);
+        this._keyboard.notify_key(t + 1000, 164, Clutter.KeyState.RELEASED);
+    }
+
     Click() {
         const t = GLib.get_monotonic_time();
         this._pointer.notify_button(t, Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
         this._pointer.notify_button(t + 1000, Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+    }
+
+    ClickAt(x, y) {
+        const t = GLib.get_monotonic_time();
+        this._pointer.notify_absolute_motion(t, x, y);
+        this._pointer.notify_button(t + 1000, Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+        this._pointer.notify_button(t + 2000, Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
     }
 
     ScreenshotAsync([path], invocation) {
@@ -108,6 +127,8 @@ export class DebugInterface {
             lightbox: Main.screenShield._shortLightbox?.active ?? null,
             mode: Main.sessionMode.currentMode,
             session: this._ext.session?.status() ?? null,
+            saver: this._ext.currentSaverId ?? null,
+            media: this._ext.session?.mediaTitle() ?? null,
             monitors: Main.layoutManager.monitors.map(m => [m.x, m.y, m.width, m.height]),
         });
     }

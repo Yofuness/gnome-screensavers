@@ -42,7 +42,94 @@ function listDir(path) {
     return names;
 }
 
-/** Parse one XScreenSaver config XML just enough for a label and description. */
+function xmlAttrs(tag) {
+    const out = {};
+    for (const m of tag.matchAll(/([\w-]+)="([^"]*)"/g))
+        out[m[1]] = m[2].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+    return out;
+}
+
+/**
+ * The user-settable options of a hack, in document order, from its config XML:
+ *   {type: 'number', id, label, lowLabel, highLabel, low, high, default, arg, invert, spin}
+ *   {type: 'boolean', id, label, default, set, unset}
+ *   {type: 'select', id, label, default, choices: [{id, label, arg}]}
+ *   {type: 'string', id, label, default: '', arg}
+ * Image, text and video helpers are skipped.
+ */
+export function parseOptions(xml) {
+    const options = [];
+    const re = /<(number|boolean|string|file)\b([^>]*?)\/?>|<select\b([^>]*)>([\s\S]*?)<\/select>/g;
+    for (const m of xml.matchAll(re)) {
+        if (m[1]) {
+            const a = xmlAttrs(m[2]);
+            if (!a.id)
+                continue;
+            if (m[1] === 'number') {
+                const low = Number(a.low), high = Number(a.high), def = Number(a.default);
+                if (![low, high, def].every(Number.isFinite) || !a.arg)
+                    continue;
+                options.push({
+                    type: 'number', id: a.id, label: a._label ?? a.id,
+                    lowLabel: a['_low-label'] ?? '', highLabel: a['_high-label'] ?? '',
+                    low, high, default: def, arg: a.arg,
+                    invert: a.convert === 'invert', spin: a.type === 'spinbutton',
+                });
+            } else if (m[1] === 'boolean') {
+                if (!a['arg-set'] && !a['arg-unset'])
+                    continue;
+                options.push({
+                    type: 'boolean', id: a.id, label: a._label ?? a.id,
+                    default: !a['arg-set'], set: a['arg-set'] ?? '', unset: a['arg-unset'] ?? '',
+                });
+            } else if (a.arg) {
+                options.push({type: 'string', id: a.id, label: a._label ?? a.id, default: '', arg: a.arg});
+            }
+        } else {
+            const a = xmlAttrs(m[3]);
+            const choices = [...m[4].matchAll(/<option\b([^>]*?)\/?>/g)].map((o, i) => {
+                const oa = xmlAttrs(o[1]);
+                return {id: oa.id ?? String(i), label: oa._label ?? oa.id ?? String(i), arg: oa['arg-set'] ?? ''};
+            });
+            if (!a.id || choices.length < 2)
+                continue;
+            const def = choices.find(c => !c.arg) ?? choices[0];
+            options.push({type: 'select', id: a.id, label: a._label ?? a.id, default: def.id, choices});
+        }
+    }
+    return options;
+}
+
+/** Command-line arguments for the values that differ from each option's default. */
+export function optionArgs(options, values = {}) {
+    const fill = (template, value) => template.trim().split(/\s+/).map(t => t.replace('%', value));
+    const args = [];
+    for (const o of options) {
+        if (!(o.id in values) || values[o.id] === o.default)
+            continue;
+        const v = values[o.id];
+        if (o.type === 'number') {
+            const n = Number(v);
+            if (!Number.isFinite(n))
+                continue;
+            const out = o.invert ? o.high + o.low - n : n;
+            args.push(...fill(o.arg, String(Math.round(out * 1000) / 1000)));
+        } else if (o.type === 'boolean') {
+            const flag = v ? o.set : o.unset;
+            if (flag)
+                args.push(...flag.trim().split(/\s+/));
+        } else if (o.type === 'select') {
+            const choice = o.choices.find(c => c.id === v);
+            if (choice?.arg)
+                args.push(...choice.arg.trim().split(/\s+/));
+        } else if (o.type === 'string' && typeof v === 'string' && v) {
+            args.push(...fill(o.arg, v));
+        }
+    }
+    return args;
+}
+
+/** Parse one XScreenSaver config XML: label, description, presets and options. */
 function parseHackConfig(xml) {
     const root = xml.match(/<screensaver\b([^>]*)>/);
     if (!root)
@@ -54,6 +141,7 @@ function parseHackConfig(xml) {
         .map(m => ({label: m[1], name: m[2]}));
     return {
         presets,
+        options: parseOptions(xml),
         name: attr('name'),
         label: attr('_label') ?? attr('name'),
         gl: attr('gl') === 'yes',
@@ -194,11 +282,46 @@ export class Registry {
         return out;
     }
 
-    /** Pick the saver to run now, honouring the random/favourites settings. */
-    choose() {
-        if (this._settings.get_boolean('random')) {
+    /** The key that option values are stored under for a saver id. */
+    optionsKey(id) {
+        return id.startsWith('flurry:') ? 'xscreensaver:flurry' : id;
+    }
+
+    /** Settable options for a saver (empty for custom commands). */
+    options(id) {
+        const key = this.optionsKey(id);
+        if (!key.startsWith('xscreensaver:'))
+            return [];
+        const hack = this._scanHacks().find(h => h.name === key.slice('xscreensaver:'.length));
+        let options = hack?.options ?? [];
+        // Flurry's preset is chosen through its own list entries.
+        if (id.startsWith('flurry:'))
+            options = options.filter(o => !(o.type === 'select' && o.choices.some(c => c.arg.startsWith('--preset'))));
+        return options;
+    }
+
+    storedValues(id) {
+        try {
+            return JSON.parse(this._settings.get_string('saver-options'))[this.optionsKey(id)] ?? {};
+        } catch {
+            return {};
+        }
+    }
+
+    _extraArgs(id) {
+        return optionArgs(this.options(id), this.storedValues(id));
+    }
+
+    /**
+     * Pick the saver to run now, honouring the random/favourites settings.
+     * random forces a random pick (rotation); exclude avoids repeating a saver.
+     */
+    choose({random = false, exclude = null} = {}) {
+        if (random || this._settings.get_boolean('random')) {
             const favs = this._settings.get_strv('favorites');
-            const pool = favs.length ? favs : this.list().map(s => s.id);
+            let pool = favs.length ? favs : this.list().map(s => s.id);
+            if (pool.length > 1 && exclude)
+                pool = pool.filter(p => p !== exclude);
             if (pool.length)
                 return pool[Math.floor(Math.random() * pool.length)];
         }
@@ -217,14 +340,16 @@ export class Registry {
                 return null;
             const wanted = OLD_FLURRY_PRESETS[arg] ?? arg;
             const preset = flurry.presets.some(p => p.name === wanted) ? wanted : 'classic';
-            return () => ({argv: [flurry.exe, '--preset', preset], title: flurry.label});
+            const extra = this._extraArgs(id);
+            return () => ({argv: [flurry.exe, '--preset', preset, ...extra], title: flurry.label});
         }
         if (kind === 'xscreensaver') {
             const hack = this._scanHacks().find(h => h.name === arg);
             if (!hack)
                 return null;
             // With no -root / -window-id a hack opens its own top-level X window.
-            return () => ({argv: [hack.exe], title: hack.label});
+            const extra = this._extraArgs(id);
+            return () => ({argv: [hack.exe, ...extra], title: hack.label});
         }
         if (kind === 'custom') {
             const c = this._customs().find(x => x.id === id);

@@ -23,6 +23,32 @@
       <summary>Seconds to run before letting the screen blank</summary>
       <description>-1 follows GNOME's Screen Blank setting (org.gnome.desktop.session idle-delay); 0 runs until a key press or click.</description>
     </key>
+    <key name="saver-options" type="s">
+      <default>'{}'</default>
+      <summary>Per-screensaver option values</summary>
+      <description>JSON object: saver id → { option id → value }, from each XScreenSaver hack's config XML. Only values differing from the hack's default are passed.</description>
+    </key>
+    <key name="show-clock" type="b">
+      <default>true</default>
+      <summary>Show the time and date on the primary monitor</summary>
+    </key>
+    <key name="show-media" type="b">
+      <default>true</default>
+      <summary>Show what's playing on the primary monitor</summary>
+    </key>
+    <key name="rotate-interval" type="i">
+      <default>0</default>
+      <summary>Minutes between switching to another random screensaver (0 = never)</summary>
+    </key>
+    <key name="retrigger-delay" type="i">
+      <default>60</default>
+      <summary>Seconds of inactivity after dismissing before the screensaver returns (0 = never)</summary>
+      <description>Only while the screen is still locked.</description>
+    </key>
+    <key name="log-history" type="b">
+      <default>false</default>
+      <summary>Keep a local log of when each screensaver ran</summary>
+    </key>
     <key name="preview-request" type="s">
       <default>''</default>
       <summary>Internal: preview request from the preferences window</summary>

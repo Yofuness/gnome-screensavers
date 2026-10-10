@@ -43,6 +43,7 @@ start() {
         XDG_RUNTIME_DIR="$RUNTIME" XDG_DATA_DIRS="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}" \
         SCREENSAVERS_DEBUG=1 GVFS_DISABLE_FUSE=1 \
         XDG_SESSION_ID=screensavers-test-none \
+        SCREENSAVERS_TEST_ROTATE_SECONDS=8 \
         setsid dbus-run-session -- bash -c '
             echo "$DBUS_SESSION_BUS_ADDRESS" > "'"$T"'/bus"
             dconf write /org/gnome/shell/enabled-extensions "[\"'"$UUID"'\"]"
@@ -108,6 +109,23 @@ is_locked() {
 
 saver_pids() {
     pgrep -f -s "$(cat "$T/pid")" -- "$1" || true
+}
+
+# corner_brighter ON OFF: top-left corner of monitor 0 is brighter in ON.
+corner_brighter() {
+    python3 -I - "$1" "$2" <<'EOF'
+import sys
+import gi
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf
+def corner(p):
+    pb = GdkPixbuf.Pixbuf.new_from_file(p).new_subpixbuf(0, 0, 500, 260)
+    px, n, rs = pb.get_pixels(), pb.get_n_channels(), pb.get_rowstride()
+    return sum(px[y * rs + x * n] for y in range(0, 260, 3) for x in range(0, 500, 3))
+on, off = corner(sys.argv[1]), corner(sys.argv[2])
+print(f"     corner brightness on={on} off={off}")
+sys.exit(0 if on > off * 1.2 else 1)
+EOF
 }
 
 shown_count() {
@@ -203,6 +221,76 @@ run() {
         call Stop >/dev/null; sleep 2.5
         check "$hack: processes gone" "[ -z \"\$(saver_pids /usr/lib/xscreensaver/$hack)\" ]"
     done
+
+    echo "== per-hack options reach the command line"
+    set_key saver-options "'{\"xscreensaver:glmatrix\": {\"density\": 10, \"fog\": false}}'"
+    call Preview 'xscreensaver:glmatrix' >/dev/null; sleep 3
+    check "glmatrix got --density 10 --no-fog" "pgrep -af /usr/lib/xscreensaver/glmatrix | grep -q -- '--density 10 --no-fog'"
+    call Stop >/dev/null; sleep 2
+    set_key saver-options "'{}'"
+
+    echo "== clock overlay on the primary monitor"
+    call Preview 'flurry:classic' >/dev/null; sleep 4
+    shot "$T/shots/overlay-on.png"
+    call Stop >/dev/null; sleep 2
+    set_key show-clock false
+    call Preview 'flurry:classic' >/dev/null; sleep 4
+    shot "$T/shots/overlay-off.png"
+    call Stop >/dev/null; sleep 2
+    set_key show-clock true
+    check "clock region is brighter with the clock on" "corner_brighter '$T/shots/overlay-on.png' '$T/shots/overlay-off.png'"
+
+    echo "== now playing + media keys"
+    : >"$T/mpris-calls"
+    DBUS_SESSION_BUS_ADDRESS=$(bus) python3 "$ROOT/tools/fake-mpris.py" "$T/mpris-calls" &
+    local mpris=$!
+    sleep 1.5
+    call Preview 'flurry:classic' >/dev/null; sleep 3
+    check "overlay knows the playing track" "call Status | grep -q '\"media\":\"Test Track\"'"
+    shot "$T/shots/media.png"
+    call MediaKey >/dev/null; sleep 1
+    check "play/pause reached the player" "grep -q PlayPause '$T/mpris-calls'"
+    check "media key did not dismiss" "[ \$(shown_count) -eq 2 ]"
+    call Stop >/dev/null; sleep 2
+    kill "$mpris" 2>/dev/null || true
+
+    echo "== rotation swaps savers without a gap"
+    set_key rotate-interval 1
+    set_key random true
+    set_key favorites "['flurry:fire', 'xscreensaver:abstractile']"
+    call Preview 'flurry:classic' >/dev/null; sleep 4
+    local first; first=$(call Status | grep -o '"saver":"[^"]*"')
+    sleep 6
+    shot "$T/shots/rotated.png"
+    local second; second=$(call Status | grep -o '"saver":"[^"]*"')
+    echo "     $first -> $second"
+    check "saver changed" "[ -n \"$second\" ] && [ \"$first\" != \"$second\" ]"
+    check "old saver processes gone" "[ -z \"\$(saver_pids '$FLURRY classic')\" ]"
+    call Stop >/dev/null; sleep 2
+    set_key rotate-interval 0
+    set_key random false
+    set_key favorites "@as []"
+
+    echo "== re-trigger after dismissing on the lock screen"
+    set_key retrigger-delay 3
+    set_key log-history true
+    call Lock >/dev/null; sleep 4
+    call Key >/dev/null; sleep 1.5
+    check "dismissed" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
+    sleep 4
+    check "saver came back after 3 s idle" "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]"
+    check "still locked" "is_locked"
+    call Key >/dev/null; sleep 1.5
+    call Unlock >/dev/null; sleep 5
+    check "no re-trigger after unlock" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
+
+    echo "== history log"
+    local log="$T/data/$UUID/history.jsonl"
+    sleep 1
+    check "history file written" "[ -s '$log' ]"
+    check "records a key dismissal" "grep -q '\"ended\":\"key\"' '$log'"
+    check "records the saver name" "grep -q '\"name\":\"Flurry (Classic)\"' '$log'"
+    [ -s "$log" ] && tail -n 3 "$log" | sed 's/^/     /'
 
     if grep -q "JS ERROR" "$T/shell.log"; then
         echo "  FAIL JS errors in log:"; grep -A3 "JS ERROR" "$T/shell.log" | head -20; FAILED=1

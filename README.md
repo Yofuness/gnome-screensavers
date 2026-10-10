@@ -14,6 +14,14 @@ XScreenSaver hack, or any program you add yourself, can run instead.
   as usual. With Screen Blank set to *Never*, it runs until you press a key. You can choose a fixed time
   instead in the extension's settings.
 - Each monitor runs its own copy of the saver.
+- **Per-screensaver settings**: the ⚙ button next to a saver opens its options (speed, density,
+  colours and so on), generated from XScreenSaver's own config files.
+- **Clock and now playing** in the top-left corner of the primary monitor. Media keys
+  (play/pause/next/previous) control your player without stopping the screensaver.
+- **Rotation**: switch to another random screensaver every few minutes.
+- **Comes back** after you dismiss it, once the lock screen has been left alone for a set time.
+- **History** (off by default): a local log of which screensaver ran when, browsable in the settings
+  window.
 
 ## Install
 
@@ -43,9 +51,13 @@ inhibitor while the saver runs, and when the run time is over it lets the origin
 | --- | --- |
 | `extension/extension.js` | Lock-screen integration, run timer, idle inhibitor. |
 | `extension/saverSession.js` | Spawns savers, finds their windows, clones them on screen, handles input. |
-| `extension/registry.js` | Saver catalogue: Flurry presets and XScreenSaver hacks (read from `/usr/share/xscreensaver/config`), plus custom commands. |
+| `extension/infoOverlay.js` | Clock/date and now-playing overlay; MPRIS for the media keys. |
+| `extension/history.js` | The optional run log (`~/.local/share/screensavers@yofuness.github.io/history.jsonl`). |
+| `extension/registry.js` | Saver catalogue and per-hack options, read from `/usr/share/xscreensaver/config`, plus custom commands. |
 | `extension/prefs.js` | Settings window. |
 | `extension/debug.js` | Test-only D-Bus hooks, loaded only when `SCREENSAVERS_DEBUG=1`. |
+| `tools/fake-mpris.py` | Fake media player used by the tests. |
+| `.github/workflows/build.yml` | CI: syntax check and builds the upload zip (attached to releases on `v*` tags). |
 | `tools/headless-test.sh` | End-to-end tests in an isolated headless gnome-shell (`make test`). |
 
 ## Custom screensavers
