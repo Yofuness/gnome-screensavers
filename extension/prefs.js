@@ -444,6 +444,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             })),
         ]));
         selection.add(this._skipKeyRow(settings, window));
+        selection.add(this._monitorModeRow(settings));
 
         const overlay = new Adw.PreferencesGroup({
             title: 'Overlay',
@@ -619,6 +620,47 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         row.add_suffix(value);
         row.add_suffix(scale);
         row.add_suffix(reset);
+        return row;
+    }
+
+    // Only shown with more than one monitor.
+    _monitorModeRow(settings) {
+        const modes = [
+            ['mirror', 'Mirrored', 'Every monitor shows the same picture, in sync.'],
+            ['same', 'Same screensaver', 'Each monitor runs its own copy of the screensaver at its own resolution.'],
+            ['different', 'Different on each', 'Each monitor gets its own screensaver from the source. ' +
+                'Skipping changes all of them; timed changes go one monitor at a time.'],
+        ];
+        const row = new Adw.ActionRow({title: 'Multiple monitors', subtitle_lines: 0});
+        const dropdown = Gtk.DropDown.new_from_strings(modes.map(m => m[1]));
+        dropdown.valign = Gtk.Align.CENTER;
+        row.add_suffix(dropdown);
+        row.activatable_widget = dropdown;
+        const sync = () => {
+            const i = Math.max(0, modes.findIndex(m => m[0] === settings.get_string('monitor-mode')));
+            if (dropdown.selected !== i)
+                dropdown.selected = i;
+            let subtitle = modes[i][2];
+            const varies = settings.get_boolean('random') || settings.get_string('active-playlist');
+            if (modes[i][0] === 'different' && !varies)
+                subtitle += ' With “Selected screensaver” as the source, every monitor shows that one.';
+            row.subtitle = subtitle;
+        };
+        dropdown.connect('notify::selected', () => {
+            const value = modes[dropdown.selected]?.[0];
+            if (value && settings.get_string('monitor-mode') !== value)
+                settings.set_string('monitor-mode', value);
+        });
+        for (const key of ['monitor-mode', 'random', 'active-playlist'])
+            settings.connect(`changed::${key}`, sync);
+        sync();
+
+        const monitors = Gdk.Display.get_default().get_monitors();
+        const syncVisible = () => {
+            row.visible = monitors.get_n_items() > 1;
+        };
+        monitors.connect('items-changed', syncVisible);
+        syncVisible();
         return row;
     }
 
@@ -1139,7 +1181,8 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                     const row = new Adw.ActionRow({
                         title: esc(e.name ?? e.id),
                         subtitle: esc(`${fmtTime(e.start)} – ${fmtTime(e.end)} · ${
-                            formatDuration((e.end - e.start) / 1000)} · ${why}${e.test ? ' · test' : e.lock ? '' : ' · preview'}`),
+                            formatDuration((e.end - e.start) / 1000)} · ${why}${e.monitor !== undefined ? ` · monitor ${e.monitor + 1}` : ''}${
+                                e.test ? ' · test' : e.lock ? '' : ' · preview'}`),
                     });
                     row.add_prefix(new Gtk.Image({icon_name: icon, tooltip_text: why}));
                     g.add(row);

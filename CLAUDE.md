@@ -35,6 +35,10 @@ lock screen. See README.md for features, architecture and the file table.
 ## Settings window (prefs.js)
 - Pages in this order: General, Playlists, Library, History, Custom. Each page has one job: settings
   live only on General, and History is view-only.
+- `monitor-mode`: "mirror" runs one process on the primary and clones its window onto every monitor
+  (cover-scaled); "same" runs a copy per monitor; "different" gives each monitor its own pick
+  (`registry.chooseMany`), with staggered timed changes via `SaverSession.swapSlot`. The test suite
+  starts in "same" mode because most scenarios count one process per monitor.
 - General ▸ Source is a single control over the `random` and `active-playlist` keys
   (`registry.choose()`: a playlist wins over random, random over the selected `saver`).
 

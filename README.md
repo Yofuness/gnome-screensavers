@@ -13,7 +13,11 @@ XScreenSaver hack, or any program you add yourself, can run instead.
 - The saver runs until GNOME's **Screen Blank** time (Settings ▸ Power), then the screen blanks
   as usual. With Screen Blank set to *Never*, it runs until you press a key. A fixed time can be set
   under General ▸ Display duration.
-- Each monitor runs its own copy of the saver.
+- **Multiple monitors** (General ▸ Screensaver selection):
+  - *Mirrored* (default): one screensaver shown identically on every monitor, in sync.
+  - *Same screensaver*: a separate copy on each monitor.
+  - *Different on each*: each monitor gets its own pick from the source, like XScreenSaver's
+    `random` mode. Skip changes all of them; timed changes go one monitor at a time.
 - **Per-screensaver settings**: the ⚙ button next to a screensaver in the Library opens its options (speed, density,
   colours and so on), generated from XScreenSaver's own config files.
 - **Clock and now playing** in any corner of any monitor (top left of the primary by default),
@@ -88,6 +92,7 @@ your real session isn't touched. It then checks that:
 - auto-lock from idle works;
 - a crashing saver is cleaned up;
 - several XScreenSaver hacks render;
+- mirrored, same and different monitor modes (including staggered timed changes);
 - per-screensaver settings reach the command line;
 - the clock overlay shows, resizes and moves corner/monitor live, and media keys reach the player without dismissing;
 - rotation swaps savers without a gap;

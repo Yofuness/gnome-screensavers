@@ -255,9 +255,10 @@ export class Registry {
      * Shuffle like a music player: play the whole pool in a random order, then
      * reshuffle.  Nothing repeats until everything has played, and a new round
      * never starts with the one that just played.  Editing the pool starts a
-     * new round.
+     * new round.  avoid: savers on other monitors, skipped over while the
+     * round has something else left.
      */
-    _nextShuffled(pool, current) {
+    _nextShuffled(pool, current, avoid = new Set()) {
         if (!pool.length)
             return null;
         const key = [...pool].sort().join('\n');
@@ -271,7 +272,8 @@ export class Registry {
             if (state.queue.length > 1 && state.queue[0] === current)
                 state.queue.push(state.queue.shift());
         }
-        return state.queue.shift();
+        const i = state.queue.findIndex(id => !avoid.has(id));
+        return state.queue.splice(Math.max(0, i), 1)[0];
     }
 
     get loaded() {
@@ -374,30 +376,47 @@ export class Registry {
         return savers.length ? {...playlist, savers} : null;
     }
 
+    /** Pick the saver to run now; see chooseMany(). */
+    choose(options = {}) {
+        return this.chooseMany(1, options)[0];
+    }
+
     /**
-     * Pick the saver to run now.  An active playlist wins: shuffled, or in order
-     * continuing where it left off.  Otherwise the random/favourites settings
-     * apply; random forces a shuffled pick (rotation, skipping).  current is
-     * the saver on screen, so a new shuffle round doesn't start with it.
+     * Pick n savers to run now (one per monitor when monitors differ).  An
+     * active playlist wins: shuffled, or in order continuing where it left off
+     * (consecutive items for consecutive monitors).  Otherwise the random /
+     * favourites settings apply; random forces a shuffled pick (rotation,
+     * skipping).  current is the saver on screen, so a new shuffle round
+     * doesn't start with it.  avoid: savers already on other monitors; picks
+     * in one call avoid each other too.  The selected saver is the same n times.
      */
-    choose({random = false, current = null} = {}) {
+    chooseMany(n, {random = false, current = null, avoid = []} = {}) {
+        const times = f => Array.from({length: n}, f);
+        const taken = new Set(avoid);
+        const shuffledPick = pool => {
+            const id = this._nextShuffled(pool, current, taken);
+            taken.add(id);
+            return id;
+        };
         const playlist = this._activePlaylist();
         if (playlist) {
             if (playlist.shuffle)
-                return this._nextShuffled(playlist.savers, current);
+                return times(() => shuffledPick(playlist.savers));
             if (this._playlistName !== playlist.name)
                 this._playlistPos = -1;
             this._playlistName = playlist.name;
-            this._playlistPos = (this._playlistPos + 1) % playlist.savers.length;
-            return playlist.savers[this._playlistPos];
+            return times(() => {
+                this._playlistPos = (this._playlistPos + 1) % playlist.savers.length;
+                return playlist.savers[this._playlistPos];
+            });
         }
         if (random || this._settings.get_boolean('random')) {
             const favs = this._settings.get_strv('favorites');
-            const pick = this._nextShuffled(favs.length ? favs : this.list().map(s => s.id), current);
-            if (pick)
-                return pick;
+            const pool = favs.length ? favs : this.list().map(s => s.id);
+            if (pool.length)
+                return times(() => shuffledPick(pool));
         }
-        return this._settings.get_string('saver');
+        return times(() => this._settings.get_string('saver'));
     }
 
     /**

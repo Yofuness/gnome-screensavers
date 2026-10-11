@@ -174,6 +174,33 @@ print(count)
 EOF
 }
 
+# mirror_match FILE: both monitors (side by side, 1920 wide each) show the same
+# picture.  The top 320 rows are skipped: the clock is only on the primary.
+mirror_match() {
+    python3 -I - "$1" <<'EOF'
+import sys
+import gi
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf
+pb = GdkPixbuf.Pixbuf.new_from_file(sys.argv[1])
+px, n, rs = pb.get_pixels(), pb.get_n_channels(), pb.get_rowstride()
+diff = lit = 0
+for y in range(320, 1080, 4):
+    for x in range(0, 1920, 4):
+        a, b = y * rs + x * n, y * rs + (x + 1920) * n
+        d = sum(abs(px[a + c] - px[b + c]) for c in range(3))
+        diff += d > 60
+        lit += sum(px[a:a + 3]) > 60
+print(f"     differing samples={diff} lit samples={lit}")
+sys.exit(0 if lit > 20 and diff < lit / 10 else 1)
+EOF
+}
+
+# savers_json: the saver id per slot, e.g. ["a","b"].
+savers_json() {
+    call Status | grep -o '"savers":\[[^]]*\]' | sed 's/"savers"://'
+}
+
 # centre_lit FILE: something light sits in the middle of monitor 0.
 centre_lit() {
     python3 -I - "$1" <<'EOF'
@@ -213,6 +240,9 @@ run() {
     FAILED=0
     start
     sleep 2
+    # Most scenarios count one saver process per monitor; the monitor modes
+    # get their own scenario below.
+    set_key monitor-mode "'same'"
 
     echo "== lock shows Flurry over the lock screen"
     call Lock >/dev/null
@@ -383,6 +413,57 @@ run() {
     set_key rotate-interval 0
     set_key random false
     set_key favorites "@as []"
+
+    echo "== multiple monitors: mirrored"
+    set_key monitor-mode "'mirror'"
+    call Preview 'xscreensaver:abstractile' >/dev/null; sleep 5
+    check "mirrored: one saver process" "[ \$(saver_pids /usr/lib/xscreensaver/ | wc -l) -eq 1 ]"
+    check "mirrored: both monitors covered" "[ \$(shown_count) -eq 2 ]"
+    shot "$T/shots/mirror.png"
+    check "mirrored: both monitors show the same picture" "mirror_match '$T/shots/mirror.png'"
+    call Stop >/dev/null; sleep 2
+
+    echo "== multiple monitors: different on each"
+    set_key monitor-mode "'different'"
+    set_key playlists "'[{\"name\": \"Trio\", \"savers\": [\"flurry:fire\", \"xscreensaver:glmatrix\", \"xscreensaver:abstractile\"], \"shuffle\": true}]'"
+    set_key active-playlist "'Trio'"
+    set_key preview-request "'@test#5'"; sleep 5
+    local first second
+    first=$(savers_json)
+    echo "     savers: $first"
+    check "different: two processes" "[ \$(saver_pids /usr/lib/xscreensaver/ | wc -l) -eq 2 ]"
+    check "different: each monitor its own saver" "python3 -c 'import json,sys; a=json.loads(sys.argv[1]); sys.exit(not (len(a)==2 and a[0]!=a[1]))' '$first'"
+    call KeyVal 65363 >/dev/null; sleep 5
+    second=$(savers_json)
+    echo "     after skip: $second"
+    check "different: skip changes every monitor" "python3 -c 'import json,sys; a,b=json.loads(sys.argv[1]),json.loads(sys.argv[2]); sys.exit(not (a[0]!=b[0] and a[1]!=b[1] and b[0]!=b[1]))' '$first' '$second'"
+    check "different: still covered after skip" "[ \$(shown_count) -ge 2 ]"
+    call Key >/dev/null; sleep 2.5
+
+    echo "== multiple monitors: staggered timed change"
+    set_key rotate-interval 1
+    set_key preview-request "'@test#6'"
+    local log="" uncovered=0 now
+    for _ in $(seq 22); do
+        sleep 1
+        now=$(savers_json)
+        [ "$now" != "${log##* }" ] && log="$log $now"
+        [ "$(shown_count)" -lt 2 ] && uncovered=$((uncovered + 1))
+    done
+    echo "     sequence:$log"
+    check "staggered: monitors changed one at a time" "python3 -c '
+import json, sys
+seq = [json.loads(x) for x in sys.argv[1].split()]
+steps = [(a, b) for a, b in zip(seq, seq[1:])]
+ok = any(a[0] != b[0] and a[1] == b[1] for a, b in steps) and any(a[1] != b[1] and a[0] == b[0] for a, b in steps)
+sys.exit(not ok)' '$log'"
+    echo "     samples with a monitor uncovered: $uncovered"
+    check "staggered: monitors stay covered" "[ $uncovered -le 1 ]"
+    call Key >/dev/null; sleep 2.5
+    set_key rotate-interval 0
+    set_key active-playlist "''"
+    set_key playlists "'[]'"
+    set_key monitor-mode "'same'"
 
     echo "== re-trigger after dismissing on the lock screen"
     set_key retrigger-delay 3

@@ -18,6 +18,9 @@ import {Registry} from './registry.js';
 import {HistoryWriter} from './history.js';
 
 const NOTICE_SECONDS = 3;
+// With a different saver on each monitor, timed changes go one monitor at a
+// time, this far apart (as XScreenSaver staggers its cycling).
+const STAGGER_SECONDS = 3;
 
 export default class ScreensaversExtension extends Extension {
     enable() {
@@ -28,7 +31,8 @@ export default class ScreensaversExtension extends Extension {
             console.warn(`[screensavers] scanning screensavers: ${e.message}`));
         this._history = new HistoryWriter(this.uuid);
         this._session = null;
-        this._run = null;
+        this._runs = null;
+        this._staggerIds = [];
         this._outgoing = null;
         this._pendingFade = null;
         this._pendingStart = null;
@@ -145,26 +149,19 @@ export default class ScreensaversExtension extends Extension {
             return this._startWhenLoaded({onLock, id, test});
         this._cancelRetrigger();
 
-        const saverId = id ?? (rotate
-            ? this._registry.choose({random: true, current: this._run?.id})
-            : this._registry.choose());
-        const launch = this._registry.launcher(saverId);
-        if (!launch) {
-            console.warn(`[screensavers] unknown screensaver "${saverId}"`);
+        const slots = this._planSlots(id, rotate);
+        if (!slots)
             return false;
-        }
 
         this._handOver({onLock, rotate, skipped, test});
 
-        const session = this._createSession(launch, rotate);
+        const session = this._createSession(slots, rotate);
         this._session = session;
-        this._run = {
-            id: saverId,
-            name: this._registry.list().find(s => s.id === saverId)?.name ?? saverId,
-            start: Date.now(),
-            lock: this._onLock,
-            ...this._test ? {test: true} : {},
-        };
+        // One history entry per monitor when each shows its own saver.
+        this._perMonitor = slots.length > 1 && this._monitorMode() === 'different' && !id;
+        this._runs = this._perMonitor
+            ? slots.map((slot, i) => this._newRun(slot.id, i))
+            : [this._newRun(slots[0].id)];
         session.start();
 
         if (rotate)
@@ -175,6 +172,49 @@ export default class ScreensaversExtension extends Extension {
             this._startRunTimer();
         this._scheduleRotation();
         return true;
+    }
+
+    // How savers are spread over the monitors: "mirror" (one saver, shown on
+    // every monitor), "same" (a copy per monitor) or "different" (a pick per
+    // monitor).  With one monitor they're all the same thing.
+    _monitorMode() {
+        return Main.layoutManager.monitors.length > 1
+            ? this._settings.get_string('monitor-mode')
+            : 'mirror';
+    }
+
+    // The saver processes to start: [{monitor, id, launch, mirror}].  null if
+    // nothing can run.
+    _planSlots(id, rotate) {
+        const monitors = Main.layoutManager.monitors;
+        const mode = this._monitorMode();
+        const count = mode === 'different' && !id ? monitors.length : 1;
+        const current = this._runs?.at(-1)?.id ?? null;
+        const ids = id ? [id] : this._registry.chooseMany(count, {random: rotate, current});
+        const picks = [];
+        for (const saverId of ids) {
+            const launch = this._registry.launcher(saverId);
+            if (launch)
+                picks.push({id: saverId, launch});
+            else
+                console.warn(`[screensavers] unknown screensaver "${saverId}"`);
+        }
+        if (!picks.length)
+            return null;
+        if (mode === 'mirror')
+            return [{monitor: Main.layoutManager.primaryMonitor, ...picks[0], mirror: true}];
+        return monitors.map((monitor, i) => ({monitor, ...picks[i % picks.length]}));
+    }
+
+    _newRun(id, monitor) {
+        return {
+            id,
+            name: this._registry.list().find(s => s.id === id)?.name ?? id,
+            start: Date.now(),
+            lock: this._onLock,
+            ...this._test ? {test: true} : {},
+            ...monitor !== undefined ? {monitor} : {},
+        };
     }
 
     // A rotation or skip keeps the old saver on screen until the new one shows;
@@ -189,7 +229,8 @@ export default class ScreensaversExtension extends Extension {
                 this._session.stop();
                 return;
             }
-            this._outgoing = {session: this._session, run: this._run, reason: skipped ? 'skipped' : 'rotated'};
+            this._cancelStagger();
+            this._outgoing = {session: this._session, runs: this._runs, reason: skipped ? 'skipped' : 'rotated'};
             return;
         }
         const pending = this._pendingFade;
@@ -215,9 +256,9 @@ export default class ScreensaversExtension extends Extension {
         return true;
     }
 
-    _createSession(launch, hidden) {
+    _createSession(slots, hidden) {
         const session = new SaverSession({
-            launch,
+            slots,
             hidden,
             grab: !this._onLock,
             info: {
@@ -273,6 +314,7 @@ export default class ScreensaversExtension extends Extension {
 
     // Next saver now; the rotation timer starts over from here.
     _skip() {
+        this._cancelStagger();
         if (this._rotateId)
             GLib.source_remove(this._rotateId);
         this._rotateId = 0;
@@ -289,8 +331,45 @@ export default class ScreensaversExtension extends Extension {
         if (seconds <= 0)
             return;
         this._rotateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, seconds, () => {
-            this.startSaver({onLock: this._onLock, rotate: true});
+            if (this._perMonitor)
+                this._staggeredChange();
+            else
+                this.startSaver({onLock: this._onLock, rotate: true});
             return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    // Each monitor moves on to its next saver in turn, a few seconds apart.
+    _staggeredChange() {
+        this._cancelStagger();
+        this._runs.forEach((_run, i) => {
+            const id = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, i * STAGGER_SECONDS, () => {
+                this._staggerIds = this._staggerIds.filter(x => x !== id);
+                this._changeMonitor(i);
+                return GLib.SOURCE_REMOVE;
+            });
+            this._staggerIds.push(id);
+        });
+    }
+
+    _cancelStagger() {
+        this._staggerIds.forEach(id => GLib.source_remove(id));
+        this._staggerIds = [];
+    }
+
+    // Swap the saver on one monitor; history moves on once the new one shows.
+    _changeMonitor(i) {
+        const session = this._session;
+        const others = this._runs.filter((_run, j) => j !== i).map(run => run.id);
+        const saverId = this._registry.choose({random: true, current: this._runs[i].id, avoid: others});
+        const launch = this._registry.launcher(saverId);
+        if (!session || !launch)
+            return;
+        session.swapSlot(i, {id: saverId, launch}, () => {
+            if (this._session !== session)
+                return;
+            this._logRun(this._runs[i], 'rotated');
+            this._runs[i] = this._newRun(saverId, i);
         });
     }
 
@@ -389,11 +468,15 @@ export default class ScreensaversExtension extends Extension {
             this._history.record({...run, end: Date.now(), ended}, this._settings.get_int('history-limit'));
     }
 
+    _logRuns(runs, ended) {
+        runs?.forEach(run => this._logRun(run, ended));
+    }
+
     // The saver being replaced by a rotation or skip.
     _stopOutgoing() {
         if (!this._outgoing)
             return;
-        this._logRun(this._outgoing.run, this._outgoing.reason);
+        this._logRuns(this._outgoing.runs, this._outgoing.reason);
         this._outgoing.session.stop();
         this._outgoing = null;
     }
@@ -408,14 +491,15 @@ export default class ScreensaversExtension extends Extension {
         if (this._noticeTimerId)
             GLib.source_remove(this._noticeTimerId);
         this._noticeTimerId = 0;
+        this._cancelStagger();
 
         this._stopOutgoing();
         if (this._session) {
-            this._logRun(this._run, reason);
+            this._logRuns(this._runs, reason);
             this._session.stop();
         }
         this._session = null;
-        this._run = null;
+        this._runs = null;
         this._uninhibitIdle();
 
         const pending = this._pendingFade;

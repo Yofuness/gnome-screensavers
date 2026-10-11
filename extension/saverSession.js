@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// A running screensaver: one saver process per monitor, each shown through a
-// live Clutter.Clone of its window.  Client windows are never painted on the
+// A running screensaver: saver processes shown through live Clutter.Clones of
+// their windows — one process per monitor, or one process mirrored onto every
+// monitor.  Client windows are never painted on the
 // lock screen, but a clone of one is, and the saver itself never receives
 // input — the lock screen keeps it.
 
@@ -18,6 +19,7 @@ const KILL_GRACE_MS = 1500;
 const ATTACH_RETRY_MS = 50;
 const ATTACH_RETRIES = 100;
 const SIGTERM = 15;
+const FADE_MS = 800;
 
 // Media keys control the current player instead of dismissing the saver.
 const MEDIA_KEYS = new Map([
@@ -43,8 +45,10 @@ export function killStragglers() {
 export class SaverSession {
     /**
      * @param {object} params
-     * @param {(monitor: object) => {argv: string[], title?: string}} params.launch
-     *   saver command for one monitor
+     * @param {{monitor: object, id: string, launch: (monitor: object) => {argv: string[], title?: string},
+     *   mirror?: boolean}[]} params.slots
+     *   one saver process each: started on `monitor`, and shown on every
+     *   monitor when `mirror` is set
      * @param {(reason: 'key'|'click') => void} params.onDismiss  called on key press / click
      * @param {() => void} params.onFailed   called when no saver window could be shown
      * @param {() => void} params.onShown    called once the first saver window is on screen
@@ -54,8 +58,8 @@ export class SaverSession {
      * @param {boolean} params.grab          take an input grab (previews on the desktop)
      * @param {{showClock: boolean, showMedia: boolean, scale: number}} params.info
      */
-    constructor({launch, onDismiss, onFailed, onShown, onSkip, skipKeyval, hidden, grab, info}) {
-        this._launch = launch;
+    constructor({slots, onDismiss, onFailed, onShown, onSkip, skipKeyval, hidden, grab, info}) {
+        this._slots = slots;
         this._onDismiss = onDismiss;
         this._onFailed = onFailed;
         this._onShown = onShown;
@@ -114,12 +118,11 @@ export class SaverSession {
         this._windowCreatedId = global.display.connect('window-created',
             (_display, window) => this._onWindowCreated(window));
 
-        for (const monitor of Main.layoutManager.monitors)
-            this._spawn(monitor);
+        this._slots.forEach((slot, index) => this._spawn(slot, index));
 
         this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, WINDOW_TIMEOUT_MS, () => {
             this._timeoutId = 0;
-            if (!this._entries.some(e => e.clone)) {
+            if (!this._entries.some(e => e.views.length)) {
                 console.warn('[screensavers] no screensaver window appeared in time');
                 this._onFailed();
             }
@@ -168,23 +171,30 @@ export class SaverSession {
         return Clutter.EVENT_PROPAGATE;
     }
 
-    _spawn(monitor) {
-        const {argv, title} = this._launch(monitor);
+    // Start the saver for one slot.  `pending` entries (a per-monitor swap)
+    // fade in over the entry they replace and call onShown once they cover it.
+    _spawn(slot, index, {pending = false, onShown = null} = {}) {
+        const {monitor, id, launch, mirror} = slot;
+        const {argv, title} = launch(monitor);
         let proc;
         try {
             proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
         } catch (e) {
             console.warn(`[screensavers] failed to start ${argv[0]}: ${e.message}`);
-            return;
+            return null;
         }
         const entry = {
+            index,
+            id,
             monitor,
+            targets: mirror ? [...Main.layoutManager.monitors] : [monitor],
             proc,
             pid: Number(proc.get_identifier()),
             title,
             window: null,
-            clone: null,
-            box: null,
+            views: [],
+            pending,
+            onShown,
         };
         this._entries.push(entry);
 
@@ -197,9 +207,53 @@ export class SaverSession {
             }
             this._detach(entry);
             entry.proc = null;
+            // A replacement that died just goes; the saver it was meant to
+            // replace stays on screen.
+            if (entry.pending) {
+                this._entries = this._entries.filter(e => e !== entry);
+                return;
+            }
             if (!this._entries.some(e => e.proc))
                 this._onFailed();
         });
+        return entry;
+    }
+
+    /**
+     * Replace the saver of one slot (a per-monitor change), fading the new one
+     * in over the old.  A swap requested while one is still on its way in
+     * replaces only that one.  onShown runs once the new saver covers the old.
+     */
+    swapSlot(index, {id, launch}, onShown) {
+        const waiting = this._entries.find(e => e.index === index && e.pending);
+        if (waiting)
+            this._remove(waiting);
+        const current = this._entries.find(e => e.index === index && !e.pending);
+        const slot = {...this._slots[index], id, launch};
+        this._slots[index] = slot;
+        this._spawn(slot, index, {
+            pending: true,
+            onShown: entry => {
+                entry.pending = false;
+                if (current)
+                    this._remove(current);
+                onShown();
+            },
+        });
+    }
+
+    // Take an entry off screen and stop its process.
+    _remove(entry) {
+        this._entries = this._entries.filter(e => e !== entry);
+        this._detach(entry);
+        if (entry.proc)
+            this._terminate(entry.proc);
+        entry.proc = null;
+    }
+
+    /** The saver id shown in each slot (for status and tests). */
+    get ids() {
+        return this._slots.map(s => s.id);
     }
 
     _onWindowCreated(window) {
@@ -245,22 +299,39 @@ export class SaverSession {
     }
 
     _attach(entry) {
-        const {monitor} = entry;
-        entry.box = new St.Widget({
-            x: monitor.x,
-            y: monitor.y,
-            width: monitor.width,
-            height: monitor.height,
-            clip_to_allocation: true,
-        });
-        entry.clone = new Clutter.Clone({source: entry.window.get_compositor_private()});
-        entry.box.add_child(entry.clone);
-        this._overlay.add_child(entry.box);
+        const actor = entry.window.get_compositor_private();
+        for (const monitor of entry.targets) {
+            const box = new St.Widget({
+                x: monitor.x,
+                y: monitor.y,
+                width: monitor.width,
+                height: monitor.height,
+                clip_to_allocation: true,
+                opacity: entry.pending ? 0 : 255,
+            });
+            const clone = new Clutter.Clone({source: actor});
+            box.add_child(clone);
+            this._overlay.add_child(box);
+            entry.views.push({monitor, box, clone});
+        }
         if (this._infoBox)
             this._overlay.set_child_above_sibling(this._infoBox.actor, null);
         this._layout(entry);
         entry.sizeId = entry.window.connect('size-changed', () => this._layout(entry));
         entry.posId = entry.window.connect('position-changed', () => this._layout(entry));
+
+        if (entry.pending) {
+            // Above the saver it replaces, fading in; that one goes only once
+            // this one fully covers it.
+            const shown = entry.onShown;
+            entry.onShown = null;
+            entry.views.forEach(({box}, i) => box.ease({
+                opacity: 255,
+                duration: FADE_MS,
+                onComplete: i === 0 ? () => shown(entry) : undefined,
+            }));
+            return;
+        }
 
         if (this._onShown) {
             const shown = this._onShown;
@@ -268,23 +339,34 @@ export class SaverSession {
             // Fading in over the outgoing saver: it may only go once this one
             // fully covers it, or the lock screen shows through the fade.
             if (this._hidden)
-                this._overlay.ease({opacity: 255, duration: 800, onComplete: shown});
+                this._overlay.ease({opacity: 255, duration: FADE_MS, onComplete: shown});
             else
                 shown();
         }
     }
 
-    // Place the clone so the window's frame exactly covers the monitor, scaling
-    // when the program refused the requested size.
+    // Place each clone so the window's frame covers its monitor.  On the saver's
+    // own monitor that's an exact fit (scaling when the program refused the
+    // requested size); a mirror on a monitor of another shape is scaled to
+    // cover it, centred and cropped, so nothing is stretched.
     _layout(entry) {
         const frame = entry.window.get_frame_rect();
         const buffer = entry.window.get_buffer_rect();
         if (frame.width <= 0 || frame.height <= 0)
             return;
-        const sx = entry.monitor.width / frame.width;
-        const sy = entry.monitor.height / frame.height;
-        entry.clone.set_scale(sx, sy);
-        entry.clone.set_position((buffer.x - frame.x) * sx, (buffer.y - frame.y) * sy);
+        for (const {monitor, clone} of entry.views) {
+            let sx = monitor.width / frame.width;
+            let sy = monitor.height / frame.height;
+            let ox = 0, oy = 0;
+            if (monitor !== entry.monitor) {
+                sx = Math.max(sx, sy);
+                sy = sx;
+                ox = (monitor.width - frame.width * sx) / 2;
+                oy = (monitor.height - frame.height * sy) / 2;
+            }
+            clone.set_scale(sx, sy);
+            clone.set_position(ox + (buffer.x - frame.x) * sx, oy + (buffer.y - frame.y) * sy);
+        }
     }
 
     _detach(entry) {
@@ -296,9 +378,9 @@ export class SaverSession {
                 entry.window.disconnect(entry[key]);
             entry[key] = 0;
         }
-        entry.box?.destroy();
-        entry.box = null;
-        entry.clone = null;
+        for (const {box} of entry.views)
+            box.destroy();
+        entry.views = [];
     }
 
     /** A centred message on the primary monitor (used by the Preview button). */

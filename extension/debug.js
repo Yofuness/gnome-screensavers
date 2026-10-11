@@ -153,7 +153,8 @@ export class DebugInterface {
             lightbox: Main.screenShield._shortLightbox?.active ?? null,
             mode: Main.sessionMode.currentMode,
             session: this._sessionStatus(),
-            saver: this._ext._run?.id ?? null,
+            saver: this._ext._runs?.[0]?.id ?? null,
+            savers: this._ext._session?.ids ?? [],
             media: this._ext._session?.media.current()?.title ?? null,
             monitors: Main.layoutManager.monitors.map(m => [m.x, m.y, m.width, m.height]),
         });
@@ -171,16 +172,16 @@ export class DebugInterface {
         return JSON.stringify(this._ext._registry.list());
     }
 
+    // One record per monitor a saver covers (a mirrored saver covers several).
     _sessionStatus() {
         const session = this._ext._session;
         if (!session)
             return null;
-        return session._entries.map(e => ({
-            pid: e.pid,
-            monitor: e.monitor.index,
-            alive: !!e.proc,
-            window: !!e.window,
-            shown: !!e.clone,
-        }));
+        return session._entries.flatMap(e => {
+            const base = {pid: e.pid, id: e.id, alive: !!e.proc, window: !!e.window};
+            return e.views.length
+                ? e.views.map(v => ({...base, monitor: v.monitor.index, shown: true}))
+                : [{...base, monitor: e.monitor.index, shown: false}];
+        });
     }
 }

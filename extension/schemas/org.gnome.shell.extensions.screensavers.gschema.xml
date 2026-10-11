@@ -59,6 +59,16 @@
       <default>100</default>
       <summary>Size of the clock and now-playing overlay, in percent</summary>
     </key>
+    <key name="monitor-mode" type="s">
+      <choices>
+        <choice value="mirror"/>
+        <choice value="same"/>
+        <choice value="different"/>
+      </choices>
+      <default>'mirror'</default>
+      <summary>How screensavers are spread over multiple monitors</summary>
+      <description>"mirror": one screensaver, shown identically on every monitor. "same": a separate copy on each monitor. "different": each monitor gets its own pick from the source (skip changes all; timed changes are staggered).</description>
+    </key>
     <key name="overlay-corner" type="s">
       <choices>
         <choice value="top-left"/>
