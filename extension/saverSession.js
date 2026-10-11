@@ -301,7 +301,7 @@ export class SaverSession {
         entry.clone = null;
     }
 
-    /** A centred message on the primary monitor (used by the Test button). */
+    /** A centred message on the primary monitor (used by the Preview button). */
     showNotice(text) {
         const m = Main.layoutManager.primaryMonitor;
         const label = new St.Label({text, style_class: 'screensavers-notice', opacity: 0});

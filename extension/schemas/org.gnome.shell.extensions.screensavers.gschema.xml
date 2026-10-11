@@ -55,7 +55,7 @@
       <summary>How many runs the history keeps (newest first)</summary>
     </key>
     <key name="overlay-scale" type="i">
-      <range min="50" max="200"/>
+      <range min="25" max="200"/>
       <default>100</default>
       <summary>Size of the clock and now-playing overlay, in percent</summary>
     </key>

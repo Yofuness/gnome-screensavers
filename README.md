@@ -17,7 +17,7 @@ XScreenSaver hack, or any program you add yourself, can run instead.
 - **Per-screensaver settings**: the ⚙ button next to a screensaver in the Library opens its options (speed, density,
   colours and so on), generated from XScreenSaver's own config files.
 - **Clock and now playing** in any corner of any monitor (top left of the primary by default),
-  resizable from 50% to 200%.
+  resizable from 25% to 200%.
   Media keys (play/pause/next/previous) control your player without stopping the screensaver.
 - **Source** (General page): the screensaver selected in the Library, a random starred one, or a
   playlist.
@@ -29,7 +29,7 @@ XScreenSaver hack, or any program you add yourself, can run instead.
 - **Resume after dismissal**: comes back after you dismiss it, once the lock screen has been left alone for a set time.
 - **History**: a local log of which screensaver ran when, browsable in the settings window. Keeps the
   newest 2000 runs by default (configurable up to 1,000,000); can be turned off.
-- **Test button** (top left of the settings window): run the whole lock-screen experience (random
+- **Preview button** (top left of the settings window): run the whole lock-screen experience (random
   pick, overlay, run time, rotation) without locking.
 
 ## Install
@@ -94,7 +94,7 @@ your real session isn't touched. It then checks that:
 - playlists play in order and loop, the skip key moves on without dismissing, and other keys still dismiss;
 - the saver comes back after being dismissed, and not after unlocking;
 - history is written and trimmed to its limit;
-- the Test button's run ends with its notice and never locks.
+- the Preview button's run ends with its notice and never locks.
 
 Choose which hacks to test with `HACKS="glmatrix pipes" make test`.
 

@@ -120,7 +120,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         this._addTestButton(window, settings);
     }
 
-    // A "Test" button at the left of the title bar: runs the screensaver as it
+    // A "Preview" button at the left of the title bar: runs the screensaver as it
     // would on the lock screen (your choice or a random pick, overlay, run time,
     // rotation) without locking.  PreferencesWindow has no API for header
     // buttons, so find its header bar and pack the button there.
@@ -139,7 +139,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         if (!header)
             return;
         const button = new Gtk.Button({
-            label: 'Test',
+            label: 'Preview',
             css_classes: ['suggested-action'],
             tooltip_text: 'Run the screensaver as it would appear when locked, without locking. ' +
                 'Press a key or click to stop.',
@@ -573,9 +573,9 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
     _sizeRow(settings) {
         const row = new Adw.ActionRow({
             title: 'Size',
-            subtitle: 'Press Test in the title bar to see changes live',
+            subtitle: 'Press Preview in the title bar to see changes live',
         });
-        const adj = new Gtk.Adjustment({lower: 50, upper: 200, step_increment: 5, page_increment: 25});
+        const adj = new Gtk.Adjustment({lower: 25, upper: 200, step_increment: 5, page_increment: 25});
         const scale = new Gtk.Scale({
             adjustment: adj,
             width_request: 240,
@@ -583,9 +583,10 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             draw_value: false,
             round_digits: 0,
         });
-        for (const mark of [50, 100, 150, 200])
+        for (const mark of [25, 100, 200])
             scale.add_mark(mark, Gtk.PositionType.BOTTOM, `${mark}%`);
-        scale.add_mark(75, Gtk.PositionType.BOTTOM, null);
+        for (const mark of [50, 75, 150])
+            scale.add_mark(mark, Gtk.PositionType.BOTTOM, null);
         const value = new Gtk.Label({width_chars: 5, xalign: 1, css_classes: ['numeric']});
         const reset = new Gtk.Button({
             icon_name: 'edit-undo-symbolic',

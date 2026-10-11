@@ -15,7 +15,8 @@ const MARGIN_X = 48;
 const MARGIN_Y = 40;
 
 // Sizes at 100%; scaled by setting fonts directly so text stays sharp at any size.
-const BASE = {time: 64, date: 16, title: 13, artist: 11, player: 9, art: 56, mediaGap: 28, artGap: 14};
+// (100% used to be 33% larger; it was made smaller in 0.7.0.)
+const BASE = {time: 48, date: 12, title: 10, artist: 8.5, player: 7, art: 42, mediaGap: 21, artGap: 10};
 
 // Players can vanish or refuse a call at any time; only cancellation is expected.
 function ignoreCancelled(e) {
