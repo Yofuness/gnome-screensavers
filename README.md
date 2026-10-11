@@ -68,6 +68,7 @@ inhibitor while the saver runs, and when the run time is over it lets the origin
 | `extension/saverSession.js` | Spawns savers, finds their windows, clones them on screen, handles input. |
 | `extension/infoOverlay.js` | Clock/date and now-playing overlay; MPRIS for the media keys. |
 | `extension/history.js` | The optional run log (`~/.local/share/screensavers@yofuness.github.io/history.jsonl`). |
+| `extension/hackFixes.js` | Per-hack corrections to XScreenSaver's option lists (e.g. Vermiculate's styles and custom worms). |
 | `extension/registry.js` | Saver catalogue and per-hack options, read from `/usr/share/xscreensaver/config`, plus custom commands. |
 | `extension/prefs.js` | Settings window. |
 | `extension/debug.js` | Test-only D-Bus hooks, loaded only when `SCREENSAVERS_DEBUG=1`. |

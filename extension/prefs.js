@@ -307,12 +307,25 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 delete all[key];
             settings.set_string('saver-options', JSON.stringify(all));
         };
+        // Rows that only apply to some settings (`when`, from hackFixes.js).
+        const conditional = [];
+        const syncVisible = () => {
+            for (const [o, row] of conditional)
+                row.visible = o.when(values);
+        };
         const set = (id, v) => {
             values[id] = v;
             save();
+            syncVisible();
         };
 
-        const dialog = new Adw.PreferencesDialog({title: saver.name, search_enabled: false});
+        // Tall enough for every row, so rows that appear later (`when`) don't
+        // land below the fold; long lists scroll.
+        const dialog = new Adw.PreferencesDialog({
+            title: saver.name,
+            search_enabled: false,
+            content_height: Math.min(760, 230 + 60 * options.length),
+        });
         const page = new Adw.PreferencesPage();
         dialog.add(page);
         const group = new Adw.PreferencesGroup({
@@ -324,6 +337,11 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         page.add(group);
 
         const widgets = [];
+        const add = (o, row) => {
+            if (o.when)
+                conditional.push([o, row]);
+            group.add(row);
+        };
         for (const o of options) {
             const current = values[o.id];
             if (o.type === 'number') {
@@ -348,14 +366,14 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 widgets.push(() => {
                     adj.value = defaults[o.id];
                 });
-                group.add(row);
+                add(o, row);
             } else if (o.type === 'boolean') {
                 const row = new Adw.SwitchRow({title: esc(o.label), active: !!current});
                 row.connect('notify::active', () => set(o.id, row.active));
                 widgets.push(() => {
                     row.active = defaults[o.id];
                 });
-                group.add(row);
+                add(o, row);
             } else if (o.type === 'select') {
                 const row = new Adw.ComboRow({
                     title: esc(optionLabel(o)),
@@ -366,7 +384,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 widgets.push(() => {
                     row.selected = Math.max(0, o.choices.findIndex(c => c.id === defaults[o.id]));
                 });
-                group.add(row);
+                add(o, row);
             } else {
                 const row = new Adw.EntryRow({title: esc(o.label), text: String(current ?? ''),
                     show_apply_button: true});
@@ -374,9 +392,10 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 widgets.push(() => {
                     row.text = '';
                 });
-                group.add(row);
+                add(o, row);
             }
         }
+        syncVisible();
 
         const actions = new Gtk.Box({spacing: 12, halign: Gtk.Align.END, margin_top: 18});
         const reset = new Gtk.Button({label: 'Reset to defaults'});
@@ -384,6 +403,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             widgets.forEach(r => r());
             Object.assign(values, defaults);
             save();
+            syncVisible();
         });
         const play = new Gtk.Button({label: 'Preview', css_classes: ['suggested-action']});
         play.connect('clicked', () => preview(settings, saver.id));

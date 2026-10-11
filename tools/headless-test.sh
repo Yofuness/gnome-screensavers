@@ -149,11 +149,14 @@ print(int(xs.max()) * 2 if xs.size else 0)
 ' "$@"
 }
 
-# white_in FILE X Y W H: count of neutral-white pixels (overlay text) in a region.
+# white_in FILE X Y W H [lit]: count of neutral-white pixels (overlay text) in a
+# region (every 2nd pixel), or of any lit pixel with "lit".
 white_in() {
     pixels '
 x0, y0, w, h = map(int, sys.argv[2:6])
-print(int(neutral_white(load(sys.argv[1])[0][y0:y0 + h:2, x0:x0 + w:2, :3]).sum()))
+region = load(sys.argv[1])[0][y0:y0 + h:2, x0:x0 + w:2, :3]
+lit = len(sys.argv) > 6 and sys.argv[6] == "lit"
+print(int((region.max(axis=2) > 40).sum() if lit else neutral_white(region).sum()))
 ' "$@"
 }
 
@@ -372,14 +375,39 @@ scenario_options() {
     stop_saver
     set_key saver-options "'{}'"
 
-    echo "== vermiculate's pattern length (an -xrm resource, not an option in its config)"
-    call Preview 'xscreensaver:vermiculate' >/dev/null
-    check_within 6 "vermiculate at defaults gets no -xrm" "[ -n \"\$(saver_pids /usr/lib/xscreensaver/vermiculate)\" ] && ! saver_cmdlines /usr/lib/xscreensaver/vermiculate | grep -q -- '-xrm'"
+    echo "== vermiculate: styles, custom worms and pattern length"
+    local v=/usr/lib/xscreensaver/vermiculate
+    vermi() {
+        set_key saver-options "'{\"xscreensaver:vermiculate\": {$1}}'"
+        call Preview 'xscreensaver:vermiculate' >/dev/null
+        wait_for 6 "[ -n \"\$(saver_pids $v)\" ]" || true
+    }
+    vermi ""
+    check_within 6 "random style (default) passes no --instring, -xrm or --speed" "[ -n \"\$(saver_pids $v)\" ] && ! saver_cmdlines $v | grep -q -- '--instring\|-xrm\|--speed'"
     stop_saver
-    set_key saver-options "'{\"xscreensaver:vermiculate\": {\"ticks\": 80000}}'"
-    call Preview 'xscreensaver:vermiculate' >/dev/null
-    check_within 6 "vermiculate got -xrm *ticks:80000" "saver_cmdlines /usr/lib/xscreensaver/vermiculate | grep -q -- '-xrm \\*ticks:80000'"
+    vermi "\"ticks\": 80000"
+    check_within 6 "pattern length: -xrm *ticks:80000" "saver_cmdlines $v | grep -q -- '-xrm \\*ticks:80000'"
     stop_saver
+    vermi "\"style\": \"swarm\""
+    check_within 6 "built-in style passes its instring and the drawing speed" "saver_cmdlines $v | grep -q -- '--instring mn1r*#by1i#lcalc1#fn --speed 300'"
+    stop_saver
+    vermi "\"style\": \"custom\", \"worms\": 3, \"movement\": \"3\", \"maze\": true, \"breakWalls\": true"
+    check_within 6 "custom style builds its instring" "saver_cmdlines $v | grep -q -- '--instring mn333#g#yek --speed 300'"
+    stop_saver
+    vermi "\"style\": \"instring\", \"instring\": \"g\""
+    check_within 6 "own instring is passed as typed" "saver_cmdlines $v | grep -q -- '--instring g --speed 300'"
+    stop_saver
+
+    # The drawing speed must really change the drawing once a style is set
+    # (with the random style the hack ignores it).
+    local slow fast
+    set_key monitor-mode "'mirror'"; set_key show-clock false; set_key show-media false
+    vermi "\"style\": \"menagerie\", \"speed\": 1"; sleep 4; shot "$T/shots/vermi-slow.png"; stop_saver
+    vermi "\"style\": \"menagerie\", \"speed\": 1000"; sleep 4; shot "$T/shots/vermi-fast.png"; stop_saver
+    set_key monitor-mode "'same'"; set_key show-clock true; set_key show-media true
+    slow=$(white_in "$T/shots/vermi-slow.png" 0 0 1920 1080 lit); fast=$(white_in "$T/shots/vermi-fast.png" 0 0 1920 1080 lit)
+    echo "     lit pixels after 4 s: speed 1=$slow speed 1000=$fast"
+    check "drawing speed changes how fast it draws" "[ $fast -gt \$(( slow * 10 + 100 )) ]"
     set_key saver-options "'{}'"
 
     echo "== sonar defaults to simulation (no ping privileges needed)"

@@ -9,6 +9,8 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
+import {HACK_FIXES} from './hackFixes.js';
+
 const HACK_DIRS = ['/usr/lib/xscreensaver', '/usr/libexec/xscreensaver', '/usr/lib64/xscreensaver'];
 const CONFIG_DIR = '/usr/share/xscreensaver/config';
 
@@ -17,20 +19,6 @@ const CONFIG_DIR = '/usr/share/xscreensaver/config';
 // screensaver started by the shell may not have; its simulation needs none.
 const DEFAULT_VALUES = {
     'xscreensaver:sonar': {ping: 'sim'},
-};
-
-// Corrections to a hack's own option list, by hack name.  Vermiculate's
-// config calls its drawing speed "Duration" (higher draws faster, so patterns
-// end sooner), and doesn't offer how long a pattern lasts: the hack reads that
-// from its "ticks" resource, which -xrm sets.
-const OPTION_FIXES = {
-    vermiculate: options => options.flatMap(o => (o.id !== 'speed' ? [o] : [
-        {...o, label: 'Drawing speed', lowLabel: 'Slow', highLabel: 'Fast'},
-        {
-            type: 'number', id: 'ticks', label: 'Pattern length', lowLabel: 'Short', highLabel: 'Long',
-            low: 5000, high: 200000, default: 20000, arg: '-xrm *ticks:%', invert: false, spin: false,
-        },
-    ])),
 };
 
 Gio._promisify(Gio.File.prototype, 'load_contents_async');
@@ -83,7 +71,8 @@ function selectOption(a, body) {
  *   {type: 'boolean', id, label, default, set, unset}
  *   {type: 'select', id, label, default, choices: [{id, label, arg}]}
  *   {type: 'string', id, label, default: '', arg}
- * Image, text and video helpers are skipped.
+ * Image, text and video helpers are skipped.  hackFixes.js may correct the
+ * list per hack; its options can add `when: values => bool`.
  */
 export function parseOptions(xml) {
     const options = [];
@@ -115,6 +104,8 @@ export function optionArgs(options, values) {
         if (!(o.id in values) || values[o.id] === o.default)
             continue;
         const v = values[o.id];
+        if ((o.type === 'number' || o.type === 'string') && !o.arg)
+            continue;                   // built by the hack's own args() (hackFixes.js)
         if (o.type === 'number') {
             const n = Number(v);
             if (!Number.isFinite(n))
@@ -203,7 +194,7 @@ function parseHackConfig(xml) {
     const presets = [...xml.matchAll(/<option\b[^>]*_label="([^"]*)"[^>]*arg-set="--preset ([^"]+)"/g)]
         .map(m => ({label: m[1], name: m[2]}));
     const name = attr('name');
-    const fix = OPTION_FIXES[name] ?? (options => options);
+    const fix = HACK_FIXES[name]?.options ?? (options => options);
     return {
         presets,
         options: fix(parseOptions(xml)),
@@ -380,7 +371,9 @@ export class Registry {
     }
 
     _extraArgs(id) {
-        return optionArgs(this.options(id), this.values(id));
+        const values = this.values(id);
+        const fixArgs = HACK_FIXES[optionsKey(id).slice('xscreensaver:'.length)]?.args;
+        return [...optionArgs(this.options(id), values), ...fixArgs?.(values) ?? []];
     }
 
     // The active playlist, limited to savers that are installed; null if none.
