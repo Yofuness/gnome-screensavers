@@ -49,6 +49,18 @@ lock screen. See README.md for features, architecture and the file table.
 - Commit and push to `main` (the user's normal workflow), then `make install`.
 
 ## extensions.gnome.org
+- **Every change must follow the review guidelines**: see
+  [docs/extension-guidelines.md](docs/extension-guidelines.md) (each rule and how this project meets
+  it). The ones most easily broken:
+  - everything created in `enable()` (actors, signals, timeouts, idle sources, processes) is undone in
+    `disable()`; nothing GObject-based at module scope;
+  - no Gtk/Gdk/Adw in shell code; no Clutter/Meta/St/Shell in `prefs.js` or the modules it imports;
+  - no imaginary APIs: check that a GNOME 51 API exists (typelib or docs) before using it;
+  - no debug logging; only `console.warn` for real failures;
+  - test-only code lives in `debug.js` or between `// BEGIN DEBUG` / `// END DEBUG`, which `make zip`
+    strips;
+  - keyboard handling on the lock screen exists only while a screensaver is shown;
+  - new settings go in the schema.
 - Version 0.2.2 was rejected; the compliance clean-up went into 0.2.4. The author must be able to
   explain the code, and AI assistance should be disclosed honestly.
 - Shexli flags `shell-version` 51; this is explained in the review notes.
