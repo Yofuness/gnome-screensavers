@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import Adw from 'gi://Adw';
+import Gdk from 'gi://Gdk';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import {Registry, optionsKey, readSaverOptions} from './registry.js';
+import {Registry, optionsKey, readPlaylists, readSaverOptions} from './registry.js';
 import {historyFile, parseHistory} from './history.js';
 
 Gio._promisify(Gio.File.prototype, 'load_contents_async');
@@ -78,6 +79,7 @@ const ENDED = {
     'run-time': ['alarm-symbolic', 'Run time over, screen blanked'],
     unlock: ['changes-allow-symbolic', 'Unlocked'],
     rotated: ['media-playlist-shuffle-symbolic', 'Rotated to the next screensaver'],
+    skipped: ['media-skip-forward-symbolic', 'Skipped with the skip key'],
     failed: ['dialog-warning-symbolic', 'Screensaver failed to start'],
 };
 
@@ -85,10 +87,11 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
         const registry = new Registry(settings);
-        window.set_default_size(760, 860);
+        window.set_default_size(900, 860);
         window.search_enabled = false;
         window.add(this._buildSaversPage(settings, registry, window));
-        window.add(this._buildBehaviourPage(settings));
+        window.add(this._buildPlaylistsPage(settings, registry, window));
+        window.add(this._buildBehaviourPage(settings, window));
         window.add(this._buildHistoryPage(settings, window));
         window.add(this._buildCustomPage(settings, window));
         this._addTestButton(window, settings);
@@ -344,7 +347,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
 
     // ── Behaviour page ──────────────────────────────────────────────────
 
-    _buildBehaviourPage(settings) {
+    _buildBehaviourPage(settings, window) {
         const sessionSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.session'});
         const page = new Adw.PreferencesPage({
             title: 'Behaviour',
@@ -403,10 +406,11 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             {value: 0, label: 'Never', explain: () => 'Shows one screensaver the whole time.'},
             ...[1, 2, 5, 10, 15, 30, 60].map(m => ({
                 value: m, label: `Every ${formatDuration(m * 60)}`,
-                explain: () => `Changes to another random screensaver every ${formatDuration(m * 60)} ` +
-                    '(from your starred ones, or all of them if none are starred).',
+                explain: () => `Changes to the next screensaver every ${formatDuration(m * 60)} ` +
+                    '(from the active playlist, or a random starred one).',
             })),
         ]));
+        choose.add(this._skipKeyRow(settings, window));
 
         const overlay = new Adw.PreferencesGroup({
             title: 'Overlay',
@@ -509,6 +513,290 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         row.add_suffix(scale);
         row.add_suffix(reset);
         return row;
+    }
+
+    // The key that skips to the next screensaver: click, then press a key.
+    _skipKeyRow(settings, window) {
+        const row = new Adw.ActionRow({
+            title: 'Skip to the next screensaver',
+            subtitle: 'Press this key while a screensaver runs. It no longer dismisses the screensaver; ' +
+                'every other key still does.',
+        });
+        const button = new Gtk.Button({valign: Gtk.Align.CENTER});
+        const clear = new Gtk.Button({
+            icon_name: 'edit-clear-symbolic',
+            valign: Gtk.Align.CENTER,
+            tooltip_text: 'No skip key',
+            css_classes: ['flat'],
+        });
+        const sync = () => {
+            const keyval = settings.get_uint('skip-key');
+            button.label = keyval ? Gtk.accelerator_get_label(keyval, 0) : 'None';
+            clear.sensitive = keyval !== 0;
+        };
+        settings.connect('changed::skip-key', sync);
+        sync();
+        clear.connect('clicked', () => settings.set_uint('skip-key', 0));
+
+        button.connect('clicked', () => {
+            const dialog = new Adw.AlertDialog({
+                heading: 'Press a key',
+                body: 'Press the key that should skip to the next screensaver. Escape cancels.',
+            });
+            dialog.add_response('cancel', 'Cancel');
+            const keys = new Gtk.EventControllerKey();
+            keys.connect('key-pressed', (_c, keyval) => {
+                const modifiers = [Gdk.KEY_Shift_L, Gdk.KEY_Shift_R, Gdk.KEY_Control_L, Gdk.KEY_Control_R,
+                    Gdk.KEY_Alt_L, Gdk.KEY_Alt_R, Gdk.KEY_Super_L, Gdk.KEY_Super_R];
+                if (modifiers.includes(keyval))
+                    return Gdk.EVENT_PROPAGATE;
+                if (keyval !== Gdk.KEY_Escape)
+                    settings.set_uint('skip-key', Gdk.keyval_to_lower(keyval));
+                dialog.close();
+                return Gdk.EVENT_STOP;
+            });
+            dialog.add_controller(keys);
+            dialog.present(window);
+        });
+
+        row.add_suffix(button);
+        row.add_suffix(clear);
+        return row;
+    }
+
+    // ── Playlists page ──────────────────────────────────────────────────
+
+    _buildPlaylistsPage(settings, registry, window) {
+        const page = new Adw.PreferencesPage({
+            title: 'Playlists',
+            icon_name: 'view-list-symbolic',
+        });
+        const save = playlists => settings.set_string('playlists', JSON.stringify(playlists));
+        const names = () => new Map(registry.list().map(s => [s.id, s.name]));
+
+        // Which playlist is in use.
+        const activeGroup = new Adw.PreferencesGroup({
+            title: 'Active playlist',
+            description: 'When a playlist is active, each screensaver comes from it — including when ' +
+                'screensavers switch or you press the skip key.',
+        });
+        page.add(activeGroup);
+        const activeRow = new Adw.ActionRow({title: 'Use'});
+        const activeDropdown = new Gtk.DropDown({valign: Gtk.Align.CENTER});
+        activeRow.add_suffix(activeDropdown);
+        activeGroup.add(activeRow);
+        let activeNames = [];
+        let syncingActive = false;
+        const syncActive = () => {
+            syncingActive = true;
+            activeNames = ['', ...readPlaylists(settings).map(p => p.name)];
+            activeDropdown.model = Gtk.StringList.new(['None', ...activeNames.slice(1)]);
+            const i = activeNames.indexOf(settings.get_string('active-playlist'));
+            activeDropdown.selected = Math.max(0, i);
+            activeRow.subtitle = i > 0
+                ? 'Screensavers come from this playlist.'
+                : 'Uses the screensaver picked on the Screensaver page, or a random starred one.';
+            syncingActive = false;
+        };
+        activeDropdown.connect('notify::selected', () => {
+            if (!syncingActive)
+                settings.set_string('active-playlist', activeNames[activeDropdown.selected] ?? '');
+        });
+
+        // The playlists themselves.
+        const listGroup = new Adw.PreferencesGroup({title: 'Your playlists'});
+        page.add(listGroup);
+        const newButton = new Gtk.Button({
+            child: new Adw.ButtonContent({icon_name: 'list-add-symbolic', label: 'New playlist'}),
+            css_classes: ['flat'],
+        });
+        listGroup.set_header_suffix(newButton);
+
+        const expanded = new Set();
+        let rows = [];
+        const rebuild = () => {
+            rows.forEach(r => listGroup.remove(r));
+            rows = [];
+            const playlists = readPlaylists(settings);
+            const saverNames = names();
+            playlists.forEach((playlist, index) => {
+                const row = this._playlistRow(playlist, saverNames, {
+                    expanded: expanded.has(playlist.name),
+                    onExpanded: open => (open ? expanded.add(playlist.name) : expanded.delete(playlist.name)),
+                    update: changed => {
+                        const all = readPlaylists(settings);
+                        all[index] = {...all[index], ...changed};
+                        save(all);
+                    },
+                    rename: () => this._askName(window, 'Rename playlist', playlist.name, name => {
+                        const all = readPlaylists(settings);
+                        all[index].name = name;
+                        if (settings.get_string('active-playlist') === playlist.name)
+                            settings.set_string('active-playlist', name);
+                        save(all);
+                    }),
+                    remove: () => {
+                        const all = readPlaylists(settings);
+                        all.splice(index, 1);
+                        if (settings.get_string('active-playlist') === playlist.name)
+                            settings.set_string('active-playlist', '');
+                        save(all);
+                    },
+                    add: () => this._pickSavers(window, registry, playlist.savers, picked => {
+                        const all = readPlaylists(settings);
+                        all[index].savers = [...all[index].savers, ...picked];
+                        save(all);
+                    }),
+                });
+                listGroup.add(row);
+                rows.push(row);
+            });
+            if (!playlists.length) {
+                const empty = new Adw.ActionRow({title: 'No playlists yet'});
+                listGroup.add(empty);
+                rows.push(empty);
+            }
+        };
+
+        newButton.connect('clicked', () => this._askName(window, 'New playlist', '', name => {
+            expanded.add(name);
+            save([...readPlaylists(settings), {name, savers: [], shuffle: true}]);
+        }));
+
+        settings.connect('changed::playlists', () => {
+            rebuild();
+            syncActive();
+        });
+        settings.connect('changed::active-playlist', syncActive);
+        syncActive();
+        // Saver names come from the asynchronously loaded catalogue.
+        registry.load().then(rebuild).catch(e => console.warn(`[screensavers] ${e.message}`));
+        return page;
+    }
+
+    // One playlist: shuffle switch, its screensavers in order, and actions.
+    _playlistRow(playlist, saverNames, {expanded, onExpanded, update, rename, remove, add}) {
+        const count = playlist.savers.length;
+        const row = new Adw.ExpanderRow({
+            title: esc(playlist.name),
+            subtitle: `${count} screensaver${count === 1 ? '' : 's'} · ${playlist.shuffle ? 'shuffled' : 'in order'}`,
+            expanded,
+        });
+        row.connect('notify::expanded', () => onExpanded(row.expanded));
+
+        const actions = [
+            ['document-edit-symbolic', 'Rename', rename],
+            ['user-trash-symbolic', 'Delete playlist', remove],
+        ];
+        for (const [icon, tooltip, callback] of actions) {
+            const button = new Gtk.Button({icon_name: icon, tooltip_text: tooltip,
+                valign: Gtk.Align.CENTER, css_classes: ['flat']});
+            button.connect('clicked', callback);
+            row.add_suffix(button);
+        }
+
+        const shuffle = new Adw.SwitchRow({
+            title: 'Shuffle',
+            subtitle: 'Off plays the screensavers top to bottom, then starts over',
+            active: playlist.shuffle,
+        });
+        shuffle.connect('notify::active', () => update({shuffle: shuffle.active}));
+        row.add_row(shuffle);
+
+        const move = (from, to) => {
+            const savers = [...playlist.savers];
+            const [id] = savers.splice(from, 1);
+            savers.splice(to, 0, id);
+            update({savers});
+        };
+        playlist.savers.forEach((id, i) => {
+            const saverRow = new Adw.ActionRow({title: esc(saverNames.get(id) ?? id)});
+            const buttons = [
+                ['go-up-symbolic', 'Move up', i > 0, () => move(i, i - 1)],
+                ['go-down-symbolic', 'Move down', i < count - 1, () => move(i, i + 1)],
+                ['list-remove-symbolic', 'Remove from playlist', true,
+                    () => update({savers: playlist.savers.filter((_, j) => j !== i)})],
+            ];
+            for (const [icon, tooltip, sensitive, callback] of buttons) {
+                const button = new Gtk.Button({icon_name: icon, tooltip_text: tooltip, sensitive,
+                    valign: Gtk.Align.CENTER, css_classes: ['flat']});
+                button.connect('clicked', callback);
+                saverRow.add_suffix(button);
+            }
+            row.add_row(saverRow);
+        });
+
+        const addRow = new Adw.ButtonRow({title: 'Add screensavers…', start_icon_name: 'list-add-symbolic'});
+        addRow.connect('activated', add);
+        row.add_row(addRow);
+        return row;
+    }
+
+    // Ask for a playlist name; calls done(name) with a non-empty, trimmed name.
+    _askName(window, heading, initial, done) {
+        const dialog = new Adw.AlertDialog({heading});
+        const entry = new Gtk.Entry({text: initial, activates_default: true});
+        dialog.extra_child = entry;
+        dialog.add_response('cancel', 'Cancel');
+        dialog.add_response('ok', 'Save');
+        dialog.set_response_appearance('ok', Adw.ResponseAppearance.SUGGESTED);
+        dialog.default_response = 'ok';
+        dialog.connect('response', (_d, response) => {
+            const name = entry.text.trim();
+            if (response === 'ok' && name)
+                done(name);
+        });
+        dialog.present(window);
+    }
+
+    // A searchable checklist of screensavers not yet in the playlist.
+    _pickSavers(window, registry, existing, done) {
+        const dialog = new Adw.Dialog({title: 'Add screensavers', content_width: 460, content_height: 560});
+        const view = new Adw.ToolbarView();
+        const header = new Adw.HeaderBar({show_end_title_buttons: false, show_start_title_buttons: false});
+        const cancel = new Gtk.Button({label: 'Cancel'});
+        const addButton = new Gtk.Button({label: 'Add', css_classes: ['suggested-action'], sensitive: false});
+        header.pack_start(cancel);
+        header.pack_end(addButton);
+        view.add_top_bar(header);
+
+        const search = new Gtk.SearchEntry({placeholder_text: 'Search screensavers', margin_start: 12,
+            margin_end: 12, margin_top: 6, margin_bottom: 6});
+        view.add_top_bar(search);
+        const list = new Gtk.ListBox({selection_mode: Gtk.SelectionMode.NONE, css_classes: ['boxed-list'],
+            margin_start: 12, margin_end: 12, margin_bottom: 12});
+        view.content = new Gtk.ScrolledWindow({child: list, vexpand: true});
+        dialog.child = view;
+
+        const picked = [];
+        const rowSavers = new Map();
+        for (const saver of registry.list().filter(s => !existing.includes(s.id))) {
+            const check = new Gtk.CheckButton({valign: Gtk.Align.CENTER});
+            check.connect('toggled', () => {
+                if (check.active)
+                    picked.push(saver.id);
+                else
+                    picked.splice(picked.indexOf(saver.id), 1);
+                addButton.sensitive = picked.length > 0;
+            });
+            const row = new Adw.ActionRow({title: esc(saver.name), subtitle: esc(saver.group), activatable_widget: check});
+            row.add_prefix(check);
+            list.append(row);
+            rowSavers.set(row, saver);
+        }
+        list.set_filter_func(row => {
+            const q = search.text.trim().toLowerCase();
+            const s = rowSavers.get(row);
+            return !q || `${s.name} ${s.group}`.toLowerCase().includes(q);
+        });
+        search.connect('search-changed', () => list.invalidate_filter());
+
+        cancel.connect('clicked', () => dialog.close());
+        addButton.connect('clicked', () => {
+            done(picked);
+            dialog.close();
+        });
+        dialog.present(window);
     }
 
     // ── History page ────────────────────────────────────────────────────

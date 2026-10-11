@@ -119,11 +119,12 @@ export default class ScreensaversExtension extends Extension {
     /**
      * Start a saver.  onLock: started in place of GNOME's fade (stops at the run
      * time and then lets the fade continue); otherwise a preview that runs until
-     * a key press or click.  rotate: replace the current saver without a gap.
+     * a key press or click.  rotate: replace the current saver without a gap
+     * (skipped: because the user pressed the skip key).
      * test: a preview that behaves like the lock screen (choice, run time,
      * rotation) without locking.
      */
-    startSaver({onLock = false, id = null, rotate = false, test = false} = {}) {
+    startSaver({onLock = false, id = null, rotate = false, skipped = false, test = false} = {}) {
         if (!this._registry.loaded)
             return this._startWhenLoaded({onLock, id, test});
         this._cancelRetrigger();
@@ -137,17 +138,7 @@ export default class ScreensaversExtension extends Extension {
             return false;
         }
 
-        if (rotate) {
-            // Keep the old saver on screen until the new one shows.
-            this._stopOutgoing('rotated');
-            this._outgoing = {session: this._session, run: this._run};
-        } else {
-            const pending = this._pendingFade;
-            this._stopSession({resumeFade: false, reason: 'replaced'});
-            this._pendingFade = onLock ? pending : null;
-            this._onLock = onLock;
-            this._test = test;
-        }
+        this._handOver({onLock, rotate, skipped, test});
 
         const session = this._createSession(launch, rotate);
         this._session = session;
@@ -168,6 +159,21 @@ export default class ScreensaversExtension extends Extension {
             this._startRunTimer();
         this._scheduleRotation();
         return true;
+    }
+
+    // A rotation or skip keeps the old saver on screen until the new one shows;
+    // anything else replaces it now, but keeps the fade GNOME just asked for.
+    _handOver({onLock, rotate, skipped, test}) {
+        if (rotate) {
+            this._stopOutgoing();
+            this._outgoing = {session: this._session, run: this._run, reason: skipped ? 'skipped' : 'rotated'};
+            return;
+        }
+        const pending = this._pendingFade;
+        this._stopSession({resumeFade: false, reason: 'replaced'});
+        this._pendingFade = onLock ? pending : null;
+        this._onLock = onLock;
+        this._test = test;
     }
 
     // Right after login the saver list may still be loading; start once it's
@@ -206,8 +212,13 @@ export default class ScreensaversExtension extends Extension {
             },
             onShown: () => {
                 if (this._session === session)
-                    this._stopOutgoing('rotated');
+                    this._stopOutgoing();
             },
+            onSkip: () => {
+                if (this._session === session)
+                    this._skip();
+            },
+            skipKeyval: this._settings.get_uint('skip-key'),
         });
         return session;
     }
@@ -234,6 +245,15 @@ export default class ScreensaversExtension extends Extension {
             this._stopSession({resumeFade: false, reason: 'run-time'});
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    // Next saver now; the rotation timer starts over from here.
+    _skip() {
+        if (this._rotateId)
+            GLib.source_remove(this._rotateId);
+        this._rotateId = 0;
+        this.startSaver({onLock: this._onLock, rotate: true, skipped: true});
+        this._scheduleRotation();
     }
 
     _rotationSeconds() {
@@ -345,11 +365,11 @@ export default class ScreensaversExtension extends Extension {
             this._history.record({...run, end: Date.now(), ended}, this._settings.get_int('history-limit'));
     }
 
-    // The saver being replaced during a rotation.
-    _stopOutgoing(reason) {
+    // The saver being replaced by a rotation or skip.
+    _stopOutgoing() {
         if (!this._outgoing)
             return;
-        this._logRun(this._outgoing.run, reason);
+        this._logRun(this._outgoing.run, this._outgoing.reason);
         this._outgoing.session.stop();
         this._outgoing = null;
     }
@@ -365,7 +385,7 @@ export default class ScreensaversExtension extends Extension {
             GLib.source_remove(this._noticeTimerId);
         this._noticeTimerId = 0;
 
-        this._stopOutgoing(reason);
+        this._stopOutgoing();
         if (this._session) {
             this._logRun(this._run, reason);
             this._session.stop();

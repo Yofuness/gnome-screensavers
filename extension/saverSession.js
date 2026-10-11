@@ -48,15 +48,19 @@ export class SaverSession {
      * @param {(reason: 'key'|'click') => void} params.onDismiss  called on key press / click
      * @param {() => void} params.onFailed   called when no saver window could be shown
      * @param {() => void} params.onShown    called once the first saver window is on screen
+     * @param {() => void} params.onSkip     called when the skip key is pressed
+     * @param {number} params.skipKeyval     the skip key (0 = none)
      * @param {boolean} params.hidden        start invisible and fade in once shown (rotation)
      * @param {boolean} params.grab          take an input grab (previews on the desktop)
      * @param {{showClock: boolean, showMedia: boolean, scale: number}} params.info
      */
-    constructor({launch, onDismiss, onFailed, onShown, hidden, grab, info}) {
+    constructor({launch, onDismiss, onFailed, onShown, onSkip, skipKeyval, hidden, grab, info}) {
         this._launch = launch;
         this._onDismiss = onDismiss;
         this._onFailed = onFailed;
         this._onShown = onShown;
+        this._onSkip = onSkip;
+        this._skipKeyval = skipKeyval;
         this._hidden = hidden;
         this._wantGrab = grab;
         this._info = info;
@@ -122,14 +126,25 @@ export class SaverSession {
         });
     }
 
-    // Key presses and clicks dismiss; media keys go to the player; pointer
-    // motion and scrolling pass through.
+    // Key presses and clicks dismiss; the skip key asks for the next saver;
+    // media keys go to the player; pointer motion and scrolling pass through.
     _onEvent(event) {
         const type = event.type();
         const isKey = type === Clutter.EventType.KEY_PRESS || type === Clutter.EventType.KEY_RELEASE;
         if (isKey && MEDIA_KEYS.has(event.get_key_symbol())) {
             if (type === Clutter.EventType.KEY_PRESS)
                 this.media.command(MEDIA_KEYS.get(event.get_key_symbol()));
+            return Clutter.EVENT_STOP;
+        }
+        if (isKey && this._skipKeyval && event.get_key_symbol() === this._skipKeyval) {
+            if (type === Clutter.EventType.KEY_PRESS && !this._skipId) {
+                // Leave the filter callback before starting the next saver.
+                this._skipId = GLib.idle_add(GLib.PRIORITY_HIGH, () => {
+                    this._skipId = 0;
+                    this._onSkip();
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
             return Clutter.EVENT_STOP;
         }
         if (type === Clutter.EventType.KEY_PRESS ||
@@ -304,6 +319,9 @@ export class SaverSession {
         if (this._dismissId)
             GLib.source_remove(this._dismissId);
         this._dismissId = 0;
+        if (this._skipId)
+            GLib.source_remove(this._skipId);
+        this._skipId = 0;
         this._cancellable.cancel();
 
         if (this._grab)

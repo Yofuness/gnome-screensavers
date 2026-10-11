@@ -59,6 +59,20 @@
       <default>100</default>
       <summary>Size of the clock and now-playing overlay, in percent</summary>
     </key>
+    <key name="playlists" type="s">
+      <default>'[]'</default>
+      <summary>Screensaver playlists</summary>
+      <description>JSON list of {"name", "savers": [saver ids], "shuffle": bool}.</description>
+    </key>
+    <key name="active-playlist" type="s">
+      <default>''</default>
+      <summary>Name of the playlist to use ('' = none)</summary>
+    </key>
+    <key name="skip-key" type="u">
+      <default>65363</default>
+      <summary>Keyval of the key that skips to the next screensaver (0 = none)</summary>
+      <description>Default is the Right arrow (0xff53). This key no longer dismisses the screensaver.</description>
+    </key>
     <key name="preview-request" type="s">
       <default>''</default>
       <summary>Internal: preview request from the preferences window</summary>

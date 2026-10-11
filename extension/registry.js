@@ -131,6 +131,16 @@ export function readSaverOptions(settings) {
     }
 }
 
+/** Saved playlists ("playlists"): [{name, savers: [ids], shuffle}]. */
+export function readPlaylists(settings) {
+    try {
+        const list = JSON.parse(settings.get_string('playlists'));
+        return Array.isArray(list) ? list.filter(p => p?.name && Array.isArray(p.savers)) : [];
+    } catch {
+        return [];
+    }
+}
+
 /** The key that option values are stored under for a saver id. */
 export function optionsKey(id) {
     return id.startsWith('flurry:') ? 'xscreensaver:flurry' : id;
@@ -193,6 +203,12 @@ async function loadHack(hackDir, file) {
     } catch {
         return null;
     }
+}
+
+function pickRandom(pool, exclude) {
+    if (pool.length > 1 && exclude)
+        pool = pool.filter(p => p !== exclude);
+    return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
 }
 
 export class Registry {
@@ -290,18 +306,39 @@ export class Registry {
         return optionArgs(this.options(id), this.values(id));
     }
 
+    // The active playlist, limited to savers that are installed; null if none.
+    _activePlaylist() {
+        const name = this._settings.get_string('active-playlist');
+        const playlist = name && readPlaylists(this._settings).find(p => p.name === name);
+        if (!playlist)
+            return null;
+        const known = new Set(this.list().map(s => s.id));
+        const savers = playlist.savers.filter(id => known.has(id));
+        return savers.length ? {...playlist, savers} : null;
+    }
+
     /**
-     * Pick the saver to run now, honouring the random/favourites settings.
-     * random forces a random pick (rotation); exclude avoids repeating a saver.
+     * Pick the saver to run now.  An active playlist wins: shuffled, or in order
+     * continuing where it left off.  Otherwise the random/favourites settings
+     * apply; random forces a random pick (rotation, skipping).  exclude avoids
+     * repeating the saver on screen.
      */
     choose({random = false, exclude = null} = {}) {
+        const playlist = this._activePlaylist();
+        if (playlist) {
+            if (playlist.shuffle)
+                return pickRandom(playlist.savers, exclude);
+            if (this._playlistName !== playlist.name)
+                this._playlistPos = -1;
+            this._playlistName = playlist.name;
+            this._playlistPos = (this._playlistPos + 1) % playlist.savers.length;
+            return playlist.savers[this._playlistPos];
+        }
         if (random || this._settings.get_boolean('random')) {
             const favs = this._settings.get_strv('favorites');
-            let pool = favs.length ? favs : this.list().map(s => s.id);
-            if (pool.length > 1 && exclude)
-                pool = pool.filter(p => p !== exclude);
-            if (pool.length)
-                return pool[Math.floor(Math.random() * pool.length)];
+            const pick = pickRandom(favs.length ? favs : this.list().map(s => s.id), exclude);
+            if (pick)
+                return pick;
         }
         return this._settings.get_string('saver');
     }

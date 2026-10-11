@@ -278,6 +278,28 @@ run() {
     call Stop >/dev/null; sleep 2
     set_key saver-options "'{}'"
 
+    echo "== playlist in order + skip key"
+    set_key playlists "'[{\"name\": \"Pair\", \"savers\": [\"flurry:fire\", \"xscreensaver:abstractile\"], \"shuffle\": false}]'"
+    set_key active-playlist "'Pair'"
+    set_key preview-request "'@test#2'"; sleep 4
+    check "playlist starts with its first saver" "call Status | grep -q '\"saver\":\"flurry:fire\"'"
+    call KeyVal 65363 >/dev/null; sleep 4
+    check "skip key moves to the next saver" "call Status | grep -q '\"saver\":\"xscreensaver:abstractile\"'"
+    check "skip did not dismiss" "[ \$(shown_count) -eq 2 ]"
+    check "old saver's processes gone after the skip" "[ -z \"\$(saver_pids '$FLURRY fire')\" ]"
+    call KeyVal 65363 >/dev/null; sleep 4
+    check "in-order playlist loops back to the start" "call Status | grep -q '\"saver\":\"flurry:fire\"'"
+    call Key >/dev/null; sleep 2.5
+    check "other keys still dismiss" "[ -z \"\$(saver_pids /usr/lib/xscreensaver/)\" ]"
+    check "history records the skip" "grep -q '\"ended\":\"skipped\"' '$T/data/$UUID/history.jsonl'"
+    set_key skip-key "uint32 0"
+    set_key preview-request "'@test#3'"; sleep 4
+    call KeyVal 65363 >/dev/null; sleep 2.5
+    check "with no skip key, Right dismisses" "[ -z \"\$(saver_pids /usr/lib/xscreensaver/)\" ]"
+    set_key skip-key "uint32 65363"
+    set_key active-playlist "''"
+    set_key playlists "'[]'"
+
     echo "== clock overlay on the primary monitor"
     call Preview 'flurry:classic' >/dev/null; sleep 4
     shot "$T/shots/overlay-on.png"

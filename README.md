@@ -18,7 +18,11 @@ XScreenSaver hack, or any program you add yourself, can run instead.
   colours and so on), generated from XScreenSaver's own config files.
 - **Clock and now playing** in the top-left corner of the primary monitor, resizable from 50% to 200%.
   Media keys (play/pause/next/previous) control your player without stopping the screensaver.
-- **Rotation**: switch to another random screensaver every few minutes.
+- **Playlists**: named lists of screensavers, shuffled or played in order. The active playlist
+  supplies every screensaver, including rotations and skips.
+- **Rotation**: switch to the next screensaver every few minutes.
+- **Skip key** (Right arrow by default, configurable): jump to the next screensaver without
+  dismissing it.
 - **Comes back** after you dismiss it, once the lock screen has been left alone for a set time.
 - **History**: a local log of which screensaver ran when, browsable in the settings window. Keeps the
   newest 2000 runs by default (configurable up to 1,000,000); can be turned off.
@@ -84,6 +88,7 @@ your real session isn't touched. It then checks that:
 - per-screensaver settings reach the command line;
 - the clock overlay shows, resizes live, and media keys reach the player without dismissing;
 - rotation swaps savers without a gap;
+- playlists play in order and loop, the skip key moves on without dismissing, and other keys still dismiss;
 - the saver comes back after being dismissed, and not after unlocking;
 - history is written and trimmed to its limit;
 - the Test button's run ends with its notice and never locks.

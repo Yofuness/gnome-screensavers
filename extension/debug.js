@@ -21,6 +21,7 @@ const IFACE = `
     <method name="Stop"/>
     <method name="Key"/>
     <method name="MediaKey"/>
+    <method name="KeyVal"><arg type="u" direction="in" name="keyval"/></method>
     <method name="Click"/>
     <method name="ClickAt">
       <arg type="d" direction="in" name="x"/>
@@ -88,6 +89,13 @@ export class DebugInterface {
         const t = GLib.get_monotonic_time();
         this._keyboard.notify_keyval(t, Clutter.KEY_Shift_L, Clutter.KeyState.PRESSED);
         this._keyboard.notify_keyval(t + 1000, Clutter.KEY_Shift_L, Clutter.KeyState.RELEASED);
+    }
+
+    // Press and release a key by keyval, e.g. 65363 for Right.
+    KeyVal(keyval) {
+        const t = GLib.get_monotonic_time();
+        this._keyboard.notify_keyval(t, keyval, Clutter.KeyState.PRESSED);
+        this._keyboard.notify_keyval(t + 1000, keyval, Clutter.KeyState.RELEASED);
     }
 
     MediaKey() {
