@@ -34,6 +34,7 @@ const IFACE = `
     </method>
     <method name="Status"><arg type="s" direction="out" name="json"/></method>
     <method name="List"><arg type="s" direction="out" name="json"/></method>
+    <method name="Connectors"><arg type="s" direction="out" name="json"/></method>
   </interface>
 </node>`;
 
@@ -156,6 +157,14 @@ export class DebugInterface {
             media: this._ext._session?.media.current()?.title ?? null,
             monitors: Main.layoutManager.monitors.map(m => [m.x, m.y, m.width, m.height]),
         });
+    }
+
+    // Connector names of each monitor (by index), e.g. [["Meta-0"], ["Meta-1"]].
+    Connectors() {
+        const result = [];
+        for (const lm of global.backend.get_monitor_manager().get_logical_monitors())
+            result[lm.get_number()] = lm.get_monitors().map(m => m.get_connector());
+        return JSON.stringify(result);
     }
 
     List() {

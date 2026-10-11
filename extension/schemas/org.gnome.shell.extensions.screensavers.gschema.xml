@@ -59,6 +59,21 @@
       <default>100</default>
       <summary>Size of the clock and now-playing overlay, in percent</summary>
     </key>
+    <key name="overlay-corner" type="s">
+      <choices>
+        <choice value="top-left"/>
+        <choice value="top-right"/>
+        <choice value="bottom-left"/>
+        <choice value="bottom-right"/>
+      </choices>
+      <default>'top-left'</default>
+      <summary>Screen corner for the clock and now-playing overlay</summary>
+    </key>
+    <key name="overlay-monitor" type="s">
+      <default>''</default>
+      <summary>Monitor for the overlay, by connector name (e.g. "DP-1"); '' = primary</summary>
+      <description>If that monitor isn't connected, the primary monitor is used.</description>
+    </key>
     <key name="playlists" type="s">
       <default>'[]'</default>
       <summary>Screensaver playlists</summary>

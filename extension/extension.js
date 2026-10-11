@@ -54,6 +54,8 @@ export default class ScreensaversExtension extends Extension {
             'changed::preview-request', () => this._onPreviewRequest(),
             'changed::history-limit', () => this._history.recount(),
             'changed::overlay-scale', () => this._session?.setInfoScale(this._overlayScale()),
+            'changed::overlay-corner', () => this._session?.setInfoLayout(this._overlayLayout()),
+            'changed::overlay-monitor', () => this._session?.setInfoLayout(this._overlayLayout()),
             this);
 
         // BEGIN DEBUG (removed from the extensions.gnome.org package by `make zip`)
@@ -114,6 +116,20 @@ export default class ScreensaversExtension extends Extension {
 
     _overlayScale() {
         return this._settings.get_int('overlay-scale') / 100;
+    }
+
+    // The chosen monitor (by connector name), or the primary one if it's unset
+    // or not connected.
+    _overlayLayout() {
+        const layout = Main.layoutManager;
+        const connector = this._settings.get_string('overlay-monitor');
+        const index = connector
+            ? global.backend.get_monitor_manager().get_monitor_for_connector(connector)
+            : -1;
+        return {
+            monitor: layout.monitors[index] ?? layout.primaryMonitor,
+            corner: this._settings.get_string('overlay-corner'),
+        };
     }
 
     /**
@@ -201,6 +217,7 @@ export default class ScreensaversExtension extends Extension {
                 showClock: this._settings.get_boolean('show-clock'),
                 showMedia: this._settings.get_boolean('show-media'),
                 scale: this._overlayScale(),
+                ...this._overlayLayout(),
             },
             onDismiss: reason => {
                 if (this._session === session)

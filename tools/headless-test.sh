@@ -153,6 +153,27 @@ print(right)
 EOF
 }
 
+# white_in FILE X Y W H: count of neutral-white pixels (overlay text) in a region.
+white_in() {
+    python3 -I - "$@" <<'EOF'
+import sys
+import gi
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf
+x0, y0, w, h = map(int, sys.argv[2:6])
+pb = GdkPixbuf.Pixbuf.new_from_file(sys.argv[1]).new_subpixbuf(x0, y0, w, h)
+px, n, rs = pb.get_pixels(), pb.get_n_channels(), pb.get_rowstride()
+count = 0
+for y in range(0, h, 2):
+    for x in range(0, w, 2):
+        o = y * rs + x * n
+        r, g, b = px[o], px[o + 1], px[o + 2]
+        if min(r, g, b) > 150 and max(r, g, b) - min(r, g, b) < 20:
+            count += 1
+print(count)
+EOF
+}
+
 # centre_lit FILE: something light sits in the middle of monitor 0.
 centre_lit() {
     python3 -I - "$1" <<'EOF'
@@ -378,6 +399,24 @@ run() {
     echo "     overlay width: 50%=$w50 100%=$w100 200%=$w200"
     check "200% is clearly bigger" "[ $w200 -gt \$(( w100 * 3 / 2 )) ]"
     check "50% is clearly smaller" "[ $w50 -lt \$(( w100 * 3 / 4 )) ]"
+
+    echo "== overlay corner and monitor"
+    local connector tl br m1
+    connector=$(call Connectors | grep -o '"[^"]*"' | sed -n 2p | tr -d '"')
+    echo "     second monitor: $connector"
+    call Preview 'xscreensaver:glmatrix' >/dev/null; sleep 4
+    set_key overlay-corner "'bottom-right'"; sleep 1.5
+    shot "$T/shots/corner-br.png"
+    set_key overlay-monitor "'$connector'"; sleep 1.5
+    shot "$T/shots/monitor-1.png"
+    call Stop >/dev/null; sleep 2
+    set_key overlay-corner "'top-left'"; set_key overlay-monitor "''"
+    tl=$(white_in "$T/shots/corner-br.png" 0 0 700 400)
+    br=$(white_in "$T/shots/corner-br.png" 1220 680 700 400)
+    m1=$(white_in "$T/shots/monitor-1.png" 3140 680 700 400)
+    echo "     white pixels: top-left=$tl bottom-right=$br second monitor bottom-right=$m1"
+    check "bottom-right corner has the overlay" "[ $br -gt 100 ] && [ $tl -lt \$(( br / 10 )) ]"
+    check "overlay moves to the chosen monitor" "[ -n '$connector' ] && [ $m1 -gt 100 ]"
 
     echo "== history limit trims to the newest runs"
     local log="$T/data/$UUID/history.jsonl"

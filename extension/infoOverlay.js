@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Clock and now-playing info shown in the top-left corner of the primary
-// monitor while a screensaver runs, plus MPRIS control for the media keys.
+// Clock and now-playing info shown in a corner of one monitor (the primary
+// by default) while a screensaver runs, plus MPRIS control for the media keys.
 
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
@@ -141,18 +141,21 @@ export class MediaWatcher {
     }
 }
 
-/** The clock + now-playing box for the primary monitor. */
+/** The clock + now-playing box, in one corner of one monitor. */
 export class InfoOverlay {
-    constructor({monitor, showClock, showMedia, media, scale = 1}) {
+    constructor({monitor, corner = 'top-left', showClock, showMedia, media, scale = 1}) {
         this._monitor = monitor;
+        this._corner = corner;
         this._media = media;
         this._scale = scale;
+        this._drift = [0, 0];
         this.actor = new St.BoxLayout({
             style_class: 'screensavers-info',
             orientation: Clutter.Orientation.VERTICAL,
-            x: monitor.x + Math.round(MARGIN_X * scale),
-            y: monitor.y + Math.round(MARGIN_Y * scale),
         });
+        // Right and bottom corners depend on the box's size, which changes
+        // with the time, the track and the scale.
+        this._sizeId = this.actor.connect('notify::size', () => this._place());
 
         if (showClock) {
             this._time = new St.Label({style_class: 'screensavers-time', x_align: Clutter.ActorAlign.START});
@@ -168,6 +171,7 @@ export class InfoOverlay {
             this._mediaBox = new St.BoxLayout({style_class: 'screensavers-media', x_align: Clutter.ActorAlign.START});
             this._art = new St.Icon({style_class: 'screensavers-art', icon_size: 56});
             const text = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, y_align: Clutter.ActorAlign.CENTER});
+            this._mediaText = text;
             this._title = new St.Label({style_class: 'screensavers-title'});
             this._artist = new St.Label({style_class: 'screensavers-artist'});
             this._player = new St.Label({style_class: 'screensavers-player'});
@@ -182,14 +186,54 @@ export class InfoOverlay {
 
         this.setScale(scale);
         this._driftId = GLib.timeout_add_seconds(GLib.PRIORITY_LOW, DRIFT_SECONDS, () => {
-            const s = this._scale;
-            this.actor.ease({
-                x: monitor.x + Math.round((MARGIN_X + Math.random() * DRIFT_PIXELS) * s),
-                y: monitor.y + Math.round((MARGIN_Y + Math.random() * DRIFT_PIXELS) * s),
-                duration: 4000,
-            });
+            this._drift = [Math.random() * DRIFT_PIXELS, Math.random() * DRIFT_PIXELS];
+            this._place(4000);
             return GLib.SOURCE_CONTINUE;
         });
+    }
+
+    // Position in the chosen corner, inset by the margin plus the burn-in drift.
+    _place(duration = 0) {
+        const m = this._monitor;
+        const s = this._scale;
+        const dx = Math.round((MARGIN_X + this._drift[0]) * s);
+        const dy = Math.round((MARGIN_Y + this._drift[1]) * s);
+        const [w, h] = this.actor.get_size();
+        const right = this._corner.endsWith('right');
+        const bottom = this._corner.startsWith('bottom');
+        const x = right ? m.x + m.width - w - dx : m.x + dx;
+        const y = bottom ? m.y + m.height - h - dy : m.y + dy;
+        if (duration) {
+            this.actor.ease({x, y, duration});
+        } else if (!this._easing()) {
+            this.actor.set_position(x, y);
+        }
+    }
+
+    _easing() {
+        return !!this.actor.get_transition('x') || !!this.actor.get_transition('y');
+    }
+
+    /** Move to another corner or monitor; safe to call while on screen. */
+    setLayout({monitor, corner}) {
+        this._monitor = monitor;
+        this._corner = corner;
+        this._applyAlign();
+        this.actor.remove_all_transitions();
+        this._place();
+    }
+
+    // Right-hand corners right-align the text so it hugs the screen edge.
+    _applyAlign() {
+        const align = this._corner.endsWith('right') ? Clutter.ActorAlign.END : Clutter.ActorAlign.START;
+        for (const a of [this._time, this._date, this._mediaBox])
+            if (a)
+                a.x_align = align;
+        if (this._mediaText) {
+            this._mediaText.x_align = align;
+            for (const l of [this._title, this._artist, this._player])
+                l.x_align = align;
+        }
     }
 
     /** Resize the overlay (1 = 100%); safe to call while it is on screen. */
@@ -205,8 +249,9 @@ export class InfoOverlay {
         if (this._art)
             this._art.icon_size = px(BASE.art);
         this._mediaBox?.set_style(`margin-top: ${px(BASE.mediaGap)}px; spacing: ${px(BASE.artGap)}px;`);
+        this._applyAlign();
         this.actor.remove_all_transitions();
-        this.actor.set_position(this._monitor.x + px(MARGIN_X), this._monitor.y + px(MARGIN_Y));
+        this._place();
     }
 
     _syncClock() {
@@ -243,6 +288,7 @@ export class InfoOverlay {
         if (this._clockId)
             this._clock.disconnect(this._clockId);
         this._clock = null;
+        this.actor.disconnect(this._sizeId);
         this.actor.destroy();
     }
 }

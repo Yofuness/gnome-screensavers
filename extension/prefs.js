@@ -78,6 +78,23 @@ function choiceRow(settings, key, title, choices, also = []) {
     return row;
 }
 
+// Grey out an overlay row when both the clock and now playing are off.
+function needsOverlay(settings, row) {
+    const sync = () => {
+        row.sensitive = settings.get_boolean('show-clock') || settings.get_boolean('show-media');
+    };
+    settings.connect('changed::show-clock', sync);
+    settings.connect('changed::show-media', sync);
+    sync();
+}
+
+const CORNERS = [
+    ['top-left', 'Top left'],
+    ['top-right', 'Top right'],
+    ['bottom-left', 'Bottom left'],
+    ['bottom-right', 'Bottom right'],
+];
+
 const ENDED = {
     key: ['input-keyboard-symbolic', 'Stopped by a key press'],
     click: ['input-mouse-symbolic', 'Stopped by a click'],
@@ -430,7 +447,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
 
         const overlay = new Adw.PreferencesGroup({
             title: 'Overlay',
-            description: 'Shown in the top-left corner of the primary monitor.',
+            description: 'The clock and what is playing, shown over the screensaver.',
         });
         page.add(overlay);
         const clock = new Adw.SwitchRow({title: 'Clock and date'});
@@ -443,6 +460,8 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         settings.bind('show-media', media, 'active', Gio.SettingsBindFlags.DEFAULT);
         overlay.add(media);
         overlay.add(this._sizeRow(settings));
+        overlay.add(this._cornerRow(settings));
+        overlay.add(this._monitorRow(settings));
 
         const history = new Adw.PreferencesGroup({
             title: 'History',
@@ -575,17 +594,81 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         settings.connect('changed::overlay-scale', sync);
         sync();
 
-        // Nothing to size when both parts of the overlay are off.
-        const syncSensitive = () => {
-            row.sensitive = settings.get_boolean('show-clock') || settings.get_boolean('show-media');
-        };
-        settings.connect('changed::show-clock', syncSensitive);
-        settings.connect('changed::show-media', syncSensitive);
-        syncSensitive();
+        needsOverlay(settings, row);
 
         row.add_suffix(value);
         row.add_suffix(scale);
         row.add_suffix(reset);
+        return row;
+    }
+
+    _cornerRow(settings) {
+        const row = new Adw.ActionRow({title: 'Position'});
+        const dropdown = Gtk.DropDown.new_from_strings(CORNERS.map(c => c[1]));
+        dropdown.valign = Gtk.Align.CENTER;
+        row.add_suffix(dropdown);
+        row.activatable_widget = dropdown;
+        const sync = () => {
+            const i = CORNERS.findIndex(c => c[0] === settings.get_string('overlay-corner'));
+            if (dropdown.selected !== Math.max(0, i))
+                dropdown.selected = Math.max(0, i);
+        };
+        dropdown.connect('notify::selected', () => {
+            const value = CORNERS[dropdown.selected]?.[0];
+            if (value && settings.get_string('overlay-corner') !== value)
+                settings.set_string('overlay-corner', value);
+        });
+        settings.connect('changed::overlay-corner', sync);
+        sync();
+        needsOverlay(settings, row);
+        return row;
+    }
+
+    // Monitors are stored by connector name ("DP-1"), which stays the same
+    // across reboots and when other monitors are plugged in or removed.
+    _monitorRow(settings) {
+        const row = new Adw.ActionRow({title: 'Monitor', subtitle_lines: 0});
+        const dropdown = new Gtk.DropDown({valign: Gtk.Align.CENTER});
+        row.add_suffix(dropdown);
+        row.activatable_widget = dropdown;
+        const monitors = Gdk.Display.get_default().get_monitors();
+
+        let values = [];
+        let syncing = false;
+        const sync = () => {
+            syncing = true;
+            const saved = settings.get_string('overlay-monitor');
+            const labels = ['Primary'];
+            values = [''];
+            for (let i = 0; i < monitors.get_n_items(); i++) {
+                const m = monitors.get_item(i);
+                const connector = m.get_connector();
+                if (!connector)
+                    continue;
+                const name = m.get_description() || [m.get_manufacturer(), m.get_model()].filter(Boolean).join(' ');
+                values.push(connector);
+                labels.push(name ? `${name} (${connector})` : connector);
+            }
+            const missing = saved && !values.includes(saved);
+            if (missing) {
+                values.push(saved);
+                labels.push(`${saved} (not connected)`);
+            }
+            dropdown.model = Gtk.StringList.new(labels);
+            dropdown.selected = Math.max(0, values.indexOf(saved));
+            row.subtitle = missing
+                ? 'This monitor is not connected, so the primary monitor is used.'
+                : '';
+            syncing = false;
+        };
+        dropdown.connect('notify::selected', () => {
+            if (!syncing)
+                settings.set_string('overlay-monitor', values[dropdown.selected] ?? '');
+        });
+        settings.connect('changed::overlay-monitor', sync);
+        monitors.connect('items-changed', sync);
+        sync();
+        needsOverlay(settings, row);
         return row;
     }
 

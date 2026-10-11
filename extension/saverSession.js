@@ -82,12 +82,13 @@ export class SaverSession {
         });
         Main.layoutManager.uiGroup.add_child(this._overlay);
 
-        // Clock and now-playing on the primary monitor, above the saver clones.
+        // Clock and now-playing in a corner of one monitor, above the saver clones.
         // The watcher is needed even without the overlay, for the media keys.
         this.media = new MediaWatcher(() => this._infoBox?.syncMedia());
         if (this._info.showClock || this._info.showMedia) {
             this._infoBox = new InfoOverlay({
-                monitor: Main.layoutManager.primaryMonitor,
+                monitor: this._info.monitor,
+                corner: this._info.corner,
                 showClock: this._info.showClock,
                 showMedia: this._info.showMedia,
                 media: this.media,
@@ -309,6 +310,10 @@ export class SaverSession {
 
     setInfoScale(scale) {
         this._infoBox?.setScale(scale);
+    }
+
+    setInfoLayout(layout) {
+        this._infoBox?.setLayout(layout);
     }
 
     /** Remove everything; the owner drops its reference afterwards. */
