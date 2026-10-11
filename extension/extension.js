@@ -146,7 +146,7 @@ export default class ScreensaversExtension extends Extension {
         this._cancelRetrigger();
 
         const saverId = id ?? (rotate
-            ? this._registry.choose({random: true, exclude: this._run?.id})
+            ? this._registry.choose({random: true, current: this._run?.id})
             : this._registry.choose());
         const launch = this._registry.launcher(saverId);
         if (!launch) {

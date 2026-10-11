@@ -313,6 +313,23 @@ run() {
     call Key >/dev/null; sleep 2.5
     check "other keys still dismiss" "[ -z \"\$(saver_pids /usr/lib/xscreensaver/)\" ]"
     check "history records the skip" "grep -q '\"ended\":\"skipped\"' '$T/data/$UUID/history.jsonl'"
+    echo "== shuffled playlist plays everything once before repeating"
+    set_key playlists "'[{\"name\": \"Trio\", \"savers\": [\"flurry:fire\", \"flurry:water\", \"xscreensaver:abstractile\"], \"shuffle\": true}]'"
+    set_key active-playlist "'Trio'"
+    local played=""
+    set_key preview-request "'@test#4'"; sleep 4
+    played="$played $(call Status | grep -o '"saver":"[^"]*"')"
+    call KeyVal 65363 >/dev/null; sleep 4
+    played="$played $(call Status | grep -o '"saver":"[^"]*"')"
+    call KeyVal 65363 >/dev/null; sleep 4
+    played="$played $(call Status | grep -o '"saver":"[^"]*"')"
+    call Key >/dev/null; sleep 2.5
+    echo "     played:$played"
+    local distinct
+    distinct=$(echo "$played" | tr ' ' '\n' | grep . | sort -u | wc -l)
+    check "three different savers in a row" "[ $distinct -eq 3 ]"
+    set_key active-playlist "'Pair'"
+
     set_key skip-key "uint32 0"
     set_key preview-request "'@test#3'"; sleep 4
     call KeyVal 65363 >/dev/null; sleep 2.5

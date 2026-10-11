@@ -263,10 +263,14 @@ export class SaverSession {
         entry.posId = entry.window.connect('position-changed', () => this._layout(entry));
 
         if (this._onShown) {
-            if (this._hidden)
-                this._overlay.ease({opacity: 255, duration: 800});
-            this._onShown();
+            const shown = this._onShown;
             this._onShown = null;
+            // Fading in over the outgoing saver: it may only go once this one
+            // fully covers it, or the lock screen shows through the fade.
+            if (this._hidden)
+                this._overlay.ease({opacity: 255, duration: 800, onComplete: shown});
+            else
+                shown();
         }
     }
 

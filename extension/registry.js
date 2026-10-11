@@ -235,16 +235,43 @@ async function loadHack(hackDir, file) {
     }
 }
 
-function pickRandom(pool, exclude) {
-    if (pool.length > 1 && exclude)
-        pool = pool.filter(p => p !== exclude);
-    return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+function shuffled(list) {
+    const a = [...list];
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
 }
 
 export class Registry {
     constructor(settings) {
         this._settings = settings;
         this._hacks = null;
+        this._shuffle = {key: null, queue: []};
+    }
+
+    /**
+     * Shuffle like a music player: play the whole pool in a random order, then
+     * reshuffle.  Nothing repeats until everything has played, and a new round
+     * never starts with the one that just played.  Editing the pool starts a
+     * new round.
+     */
+    _nextShuffled(pool, current) {
+        if (!pool.length)
+            return null;
+        const key = [...pool].sort().join('\n');
+        const state = this._shuffle;
+        if (state.key !== key) {
+            state.key = key;
+            state.queue = [];
+        }
+        if (!state.queue.length) {
+            state.queue = shuffled(pool);
+            if (state.queue.length > 1 && state.queue[0] === current)
+                state.queue.push(state.queue.shift());
+        }
+        return state.queue.shift();
     }
 
     get loaded() {
@@ -350,14 +377,14 @@ export class Registry {
     /**
      * Pick the saver to run now.  An active playlist wins: shuffled, or in order
      * continuing where it left off.  Otherwise the random/favourites settings
-     * apply; random forces a random pick (rotation, skipping).  exclude avoids
-     * repeating the saver on screen.
+     * apply; random forces a shuffled pick (rotation, skipping).  current is
+     * the saver on screen, so a new shuffle round doesn't start with it.
      */
-    choose({random = false, exclude = null} = {}) {
+    choose({random = false, current = null} = {}) {
         const playlist = this._activePlaylist();
         if (playlist) {
             if (playlist.shuffle)
-                return pickRandom(playlist.savers, exclude);
+                return this._nextShuffled(playlist.savers, current);
             if (this._playlistName !== playlist.name)
                 this._playlistPos = -1;
             this._playlistName = playlist.name;
@@ -366,7 +393,7 @@ export class Registry {
         }
         if (random || this._settings.get_boolean('random')) {
             const favs = this._settings.get_strv('favorites');
-            const pick = pickRandom(favs.length ? favs : this.list().map(s => s.id), exclude);
+            const pick = this._nextShuffled(favs.length ? favs : this.list().map(s => s.id), current);
             if (pick)
                 return pick;
         }
