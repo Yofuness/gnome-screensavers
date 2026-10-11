@@ -81,9 +81,9 @@ function choiceRow(settings, key, title, choices, also = []) {
 const ENDED = {
     key: ['input-keyboard-symbolic', 'Stopped by a key press'],
     click: ['input-mouse-symbolic', 'Stopped by a click'],
-    'run-time': ['alarm-symbolic', 'Run time over, screen blanked'],
+    'run-time': ['alarm-symbolic', 'Display duration over, screen turned off'],
     unlock: ['changes-allow-symbolic', 'Unlocked'],
-    rotated: ['media-playlist-shuffle-symbolic', 'Rotated to the next screensaver'],
+    rotated: ['media-playlist-shuffle-symbolic', 'Changed to the next screensaver'],
     skipped: ['media-skip-forward-symbolic', 'Skipped with the skip key'],
     failed: ['dialog-warning-symbolic', 'Screensaver failed to start'],
 };
@@ -94,10 +94,11 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const registry = new Registry(settings);
         window.set_default_size(900, 860);
         window.search_enabled = false;
-        window.add(this._buildSaversPage(settings, registry, window));
+        const general = this._buildGeneralPage(settings, registry, window);
+        window.add(general);
         window.add(this._buildPlaylistsPage(settings, registry, window));
-        window.add(this._buildBehaviourPage(settings, window));
-        window.add(this._buildHistoryPage(settings, window));
+        window.add(this._buildLibraryPage(settings, registry, window));
+        window.add(this._buildHistoryPage(settings, window, general));
         window.add(this._buildCustomPage(settings, window));
         this._addTestButton(window, settings);
     }
@@ -123,30 +124,32 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const button = new Gtk.Button({
             label: 'Test',
             css_classes: ['suggested-action'],
-            tooltip_text: 'Run the screensaver exactly as it would when locked, without locking. ' +
+            tooltip_text: 'Run the screensaver as it would appear when locked, without locking. ' +
                 'Press a key or click to stop.',
         });
         button.connect('clicked', () => preview(settings, '@test'));
         header.pack_start(button);
     }
 
-    // ── Screensaver page ────────────────────────────────────────────────
+    // ── Library page ────────────────────────────────────────────────────
 
-    _buildSaversPage(settings, registry, window) {
+    _buildLibraryPage(settings, registry, window) {
         const page = new Adw.PreferencesPage({
-            title: 'Screensaver',
+            title: 'Library',
             icon_name: 'preferences-desktop-screensaver-symbolic',
         });
 
         const group = new Adw.PreferencesGroup({
             title: 'Screensavers',
-            description: 'Pick the one to show. The star adds it to the random rotation, the gear ' +
-                'changes its settings and the play button previews it (press a key or click to stop).',
+            description: 'The radio button selects the screensaver used when General ▸ Source is ' +
+                '“Selected screensaver”. ★ stars it, ⚙ opens its settings and ▶ previews it ' +
+                '(press a key or click to stop).',
         });
         page.add(group);
 
-        const search = new Gtk.SearchEntry({placeholder_text: 'Search screensavers', hexpand: true});
-        group.set_header_suffix(search);
+        // Full width, under the description, directly above the list.
+        const search = new Gtk.SearchEntry({placeholder_text: 'Search screensavers', margin_bottom: 12});
+        group.add(search);
 
         const list = new Gtk.ListBox({selection_mode: Gtk.SelectionMode.NONE, css_classes: ['boxed-list']});
         group.add(list);
@@ -164,7 +167,12 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         settings.connect('changed::saver', syncSelected);
 
         // The saver list is read from disk asynchronously; fill it in when ready.
+        // Also rebuilt when custom commands change, so new ones appear at once.
         const populate = () => {
+            list.remove_all();
+            radios.clear();
+            rowSavers.clear();
+            radioGroup = null;
             const savers = registry.list();
             if (!savers.length) {
                 group.description = 'No screensavers found. Install the xscreensaver package ' +
@@ -195,11 +203,15 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 const star = new Gtk.ToggleButton({
                     icon_name: 'starred-symbolic',
                     valign: Gtk.Align.CENTER,
-                    tooltip_text: 'Include in random rotation',
                     css_classes: ['flat'],
                     active: favourites().has(saver.id),
                 });
+                const syncStar = () => {
+                    star.tooltip_text = star.active ? 'Unstar' : 'Star';
+                };
+                syncStar();
                 star.connect('toggled', () => {
+                    syncStar();
                     const favs = favourites();
                     if (star.active)
                         favs.add(saver.id);
@@ -233,7 +245,10 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             }
             syncSelected();
         };
-        registry.load().then(populate).catch(e => console.warn(`[screensavers] ${e.message}`));
+        registry.load().then(() => {
+            populate();
+            settings.connect('changed::custom-savers', populate);
+        }).catch(e => console.warn(`[screensavers] ${e.message}`));
 
         list.set_filter_func(row => {
             const q = search.text.trim().toLowerCase();
@@ -350,23 +365,23 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         dialog.present(window);
     }
 
-    // ── Behaviour page ──────────────────────────────────────────────────
+    // ── General page ────────────────────────────────────────────────────
 
-    _buildBehaviourPage(settings, window) {
+    _buildGeneralPage(settings, registry, window) {
         const sessionSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.session'});
         const page = new Adw.PreferencesPage({
-            title: 'Behaviour',
+            title: 'General',
             icon_name: 'preferences-system-symbolic',
         });
 
         const lock = new Adw.PreferencesGroup({
-            title: 'On the lock screen',
-            description: 'A key press or click stops the screensaver and shows the unlock prompt. ' +
-                'Moving the mouse does not, and media keys control your music instead.',
+            title: 'Lock screen',
+            description: 'A key press or click dismisses the screensaver and shows the unlock prompt. ' +
+                'Moving the mouse does not, and media keys control your player instead.',
         });
         page.add(lock);
 
-        const onLock = new Adw.SwitchRow({title: 'Show a screensaver when the screen locks'});
+        const onLock = new Adw.SwitchRow({title: 'Show screensaver when locked'});
         settings.bind('enabled-on-lock', onLock, 'active', Gio.SettingsBindFlags.DEFAULT);
         lock.add(onLock);
 
@@ -374,48 +389,44 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             const s = sessionSettings.get_uint('idle-delay');
             return s ? formatDuration(s) : 'Never';
         };
-        const runTime = choiceRow(settings, 'run-time', 'Run time', [
-            {value: -1, label: 'Screen Blank', explain: () => sessionSettings.get_uint('idle-delay')
-                ? `Runs for your Screen Blank time (Settings ▸ Power, currently ${blankText()}), then the screen blanks.`
-                : 'Your Screen Blank (Settings ▸ Power) is Never, so it runs until a key press or click.'},
-            {value: 0, label: 'Key or click',
+        const duration = choiceRow(settings, 'run-time', 'Display duration', [
+            {value: -1, label: 'Match Screen Blank', explain: () => sessionSettings.get_uint('idle-delay')
+                ? `Runs for your Screen Blank time (Settings ▸ Power, currently ${blankText()}), then the screen turns off.`
+                : 'Screen Blank (Settings ▸ Power) is set to Never, so it runs until dismissed.'},
+            {value: 0, label: 'Until dismissed',
                 explain: () => 'Never stops on its own; the screen stays on while locked.'},
             ...[60, 300, 600, 900, 1800, 3600].map(v => ({
                 value: v, label: formatDuration(v),
-                explain: () => `Runs for ${formatDuration(v)}, then the screen blanks.`,
+                explain: () => `Runs for ${formatDuration(v)}, then the screen turns off.`,
             })),
         ], [[sessionSettings, 'changed::idle-delay']]);
-        lock.add(runTime);
+        lock.add(duration);
 
-        const retrigger = choiceRow(settings, 'retrigger-delay', 'Come back after dismissing', [
+        const resume = choiceRow(settings, 'retrigger-delay', 'Resume after dismissal', [
             {value: 0, label: 'Never',
                 explain: () => 'After a key press or click, the lock screen stays until you unlock.'},
             ...[15, 30, 60, 120, 300].map(v => ({
                 value: v, label: formatDuration(v),
-                explain: () => `Returns after ${formatDuration(v)} untouched on the lock screen.`,
+                explain: () => `Starts again after the lock screen is left idle for ${formatDuration(v)}.`,
             })),
         ]);
-        lock.add(retrigger);
+        lock.add(resume);
+        // Only meaningful when locking shows a screensaver.
+        for (const row of [duration, resume])
+            settings.bind('enabled-on-lock', row, 'sensitive', Gio.SettingsBindFlags.GET);
 
-        const choose = new Adw.PreferencesGroup({title: 'Choosing a screensaver'});
-        page.add(choose);
+        const selection = new Adw.PreferencesGroup({title: 'Screensaver selection'});
+        page.add(selection);
+        selection.add(this._sourceRow(settings, registry));
 
-        const random = new Adw.SwitchRow({
-            title: 'Random screensaver each time',
-            subtitle: 'Picks from your starred screensavers, or from all of them if none are starred',
-        });
-        settings.bind('random', random, 'active', Gio.SettingsBindFlags.DEFAULT);
-        choose.add(random);
-
-        choose.add(choiceRow(settings, 'rotate-interval', 'Switch screensavers', [
+        selection.add(choiceRow(settings, 'rotate-interval', 'Change screensaver', [
             {value: 0, label: 'Never', explain: () => 'Shows one screensaver the whole time.'},
             ...[1, 2, 5, 10, 15, 30, 60].map(m => ({
                 value: m, label: `Every ${formatDuration(m * 60)}`,
-                explain: () => `Changes to the next screensaver every ${formatDuration(m * 60)} ` +
-                    '(from the active playlist, or a random starred one).',
+                explain: () => `Moves on to the next screensaver from the source every ${formatDuration(m * 60)}.`,
             })),
         ]));
-        choose.add(this._skipKeyRow(settings, window));
+        selection.add(this._skipKeyRow(settings, window));
 
         const overlay = new Adw.PreferencesGroup({
             title: 'Overlay',
@@ -433,17 +444,18 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         overlay.add(media);
         overlay.add(this._sizeRow(settings));
 
-        const history = new Adw.PreferencesGroup({title: 'History'});
-        page.add(history);
-        const log = new Adw.SwitchRow({
-            title: 'Keep a history of screensaver runs',
-            subtitle: 'Stored only on this computer; browse it on the History page',
+        const history = new Adw.PreferencesGroup({
+            title: 'History',
+            description: 'A record of which screensaver ran when, stored only on this computer. ' +
+                'Browse it on the History page.',
         });
+        page.add(history);
+        const log = new Adw.SwitchRow({title: 'Record history'});
         settings.bind('log-history', log, 'active', Gio.SettingsBindFlags.DEFAULT);
         history.add(log);
 
         const limit = new Adw.SpinRow({
-            title: 'Runs to keep',
+            title: 'History size',
             adjustment: new Gtk.Adjustment({lower: 100, upper: 1000000, step_increment: 100,
                 page_increment: 1000}),
         });
@@ -452,7 +464,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const syncLimit = () => {
             // About 150 bytes per run.
             const bytes = settings.get_int('history-limit') * 150;
-            limit.subtitle = `The newest ones are kept; up to about ${GLib.format_size(bytes)} on disk`;
+            limit.subtitle = `Runs to keep; older ones are removed (about ${GLib.format_size(bytes)} on disk)`;
         };
         settings.connect('changed::history-limit', syncLimit);
         syncLimit();
@@ -461,12 +473,69 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         return page;
     }
 
+    // Where screensavers come from: the one selected in the Library, a random
+    // starred one, or a playlist.  One choice over the `random` and
+    // `active-playlist` keys, which registry.choose() reads (a playlist wins
+    // over random, random over the selection).
+    _sourceRow(settings, registry) {
+        const row = new Adw.ActionRow({title: 'Source', subtitle_lines: 0});
+        const dropdown = new Gtk.DropDown({valign: Gtk.Align.CENTER});
+        row.add_suffix(dropdown);
+        row.activatable_widget = dropdown;
+
+        let values = [];
+        let syncing = false;
+        const current = () => {
+            const active = settings.get_string('active-playlist');
+            if (active && readPlaylists(settings).some(p => p.name === active))
+                return `playlist:${active}`;
+            return settings.get_boolean('random') ? 'random' : 'selected';
+        };
+        const explain = value => {
+            if (value === 'random') {
+                return settings.get_strv('favorites').length
+                    ? 'A random starred screensaver each time.'
+                    : 'A random screensaver each time. Star some in the Library to choose from those only.';
+            }
+            if (value.startsWith('playlist:'))
+                return 'Screensavers from this playlist; edit it on the Playlists page.';
+            const id = settings.get_string('saver');
+            const name = registry.list().find(s => s.id === id)?.name ?? id;
+            return `${name}. Choose another in the Library.`;
+        };
+        const sync = () => {
+            syncing = true;
+            const playlists = readPlaylists(settings).map(p => p.name);
+            values = ['selected', 'random', ...playlists.map(n => `playlist:${n}`)];
+            dropdown.model = Gtk.StringList.new(['Selected screensaver', 'Random (starred)',
+                ...playlists.map(n => `Playlist: ${n}`)]);
+            const value = current();
+            dropdown.selected = Math.max(0, values.indexOf(value));
+            row.subtitle = esc(explain(value));
+            syncing = false;
+        };
+        dropdown.connect('notify::selected', () => {
+            if (syncing)
+                return;
+            const value = values[dropdown.selected] ?? 'selected';
+            const playlist = value.startsWith('playlist:') ? value.slice('playlist:'.length) : '';
+            settings.set_string('active-playlist', playlist);
+            settings.set_boolean('random', value === 'random');
+        });
+        for (const key of ['playlists', 'active-playlist', 'random', 'saver', 'favorites'])
+            settings.connect(`changed::${key}`, sync);
+        sync();
+        // Saver names arrive with the asynchronously loaded catalogue.
+        registry.load().then(sync).catch(e => console.warn(`[screensavers] ${e.message}`));
+        return row;
+    }
+
     // Overlay size: a slider with marked steps, the current value, a reset
     // button and a preview.  A running preview resizes live as it moves.
     _sizeRow(settings) {
         const row = new Adw.ActionRow({
             title: 'Size',
-            subtitle: 'Drag while a test runs to see the change live',
+            subtitle: 'Press Test in the title bar to see changes live',
         });
         const adj = new Gtk.Adjustment({lower: 50, upper: 200, step_increment: 5, page_increment: 25});
         const scale = new Gtk.Scale({
@@ -523,9 +592,8 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
     // The key that skips to the next screensaver: click, then press a key.
     _skipKeyRow(settings, window) {
         const row = new Adw.ActionRow({
-            title: 'Skip to the next screensaver',
-            subtitle: 'Press this key while a screensaver runs. It no longer dismisses the screensaver; ' +
-                'every other key still does.',
+            title: 'Skip key',
+            subtitle: 'Shows the next screensaver from the source. Every other key still dismisses.',
         });
         const button = new Gtk.Button({valign: Gtk.Align.CENTER});
         const clear = new Gtk.Button({
@@ -579,37 +647,10 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const save = playlists => settings.set_string('playlists', JSON.stringify(playlists));
         const names = () => new Map(registry.list().map(s => [s.id, s.name]));
 
-        // Which playlist is in use.
-        const activeGroup = new Adw.PreferencesGroup({
-            title: 'Active playlist',
-            description: 'When a playlist is active, each screensaver comes from it — including when ' +
-                'screensavers switch or you press the skip key.',
+        const listGroup = new Adw.PreferencesGroup({
+            title: 'Your playlists',
+            description: 'To play a playlist, choose it under General ▸ Source.',
         });
-        page.add(activeGroup);
-        const activeRow = new Adw.ActionRow({title: 'Use'});
-        const activeDropdown = new Gtk.DropDown({valign: Gtk.Align.CENTER});
-        activeRow.add_suffix(activeDropdown);
-        activeGroup.add(activeRow);
-        let activeNames = [];
-        let syncingActive = false;
-        const syncActive = () => {
-            syncingActive = true;
-            activeNames = ['', ...readPlaylists(settings).map(p => p.name)];
-            activeDropdown.model = Gtk.StringList.new(['None', ...activeNames.slice(1)]);
-            const i = activeNames.indexOf(settings.get_string('active-playlist'));
-            activeDropdown.selected = Math.max(0, i);
-            activeRow.subtitle = i > 0
-                ? 'Screensavers come from this playlist.'
-                : 'Uses the screensaver picked on the Screensaver page, or a random starred one.';
-            syncingActive = false;
-        };
-        activeDropdown.connect('notify::selected', () => {
-            if (!syncingActive)
-                settings.set_string('active-playlist', activeNames[activeDropdown.selected] ?? '');
-        });
-
-        // The playlists themselves.
-        const listGroup = new Adw.PreferencesGroup({title: 'Your playlists'});
         page.add(listGroup);
         const newButton = new Gtk.Button({
             child: new Adw.ButtonContent({icon_name: 'list-add-symbolic', label: 'New playlist'}),
@@ -640,6 +681,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             const saverNames = names();
             playlists.forEach((playlist, index) => {
                 const row = this._playlistRow(playlist, saverNames, {
+                    inUse: playlist.name === settings.get_string('active-playlist'),
                     expanded: expanded.has(playlist.name),
                     onExpanded: open => (open ? expanded.add(playlist.name) : expanded.delete(playlist.name)),
                     update: changed => {
@@ -682,19 +724,15 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             save([...readPlaylists(settings), {name, savers: [], shuffle: true}]);
         }));
 
-        settings.connect('changed::playlists', () => {
-            rebuild();
-            syncActive();
-        });
-        settings.connect('changed::active-playlist', syncActive);
-        syncActive();
+        settings.connect('changed::playlists', rebuild);
+        settings.connect('changed::active-playlist', rebuild);
         // Saver names come from the asynchronously loaded catalogue.
         registry.load().then(rebuild).catch(e => console.warn(`[screensavers] ${e.message}`));
         return page;
     }
 
     // One playlist: shuffle switch, its screensavers in order, and actions.
-    _playlistRow(playlist, saverNames, {expanded, onExpanded, update, rename, remove, add}) {
+    _playlistRow(playlist, saverNames, {inUse, expanded, onExpanded, update, rename, remove, add}) {
         const count = playlist.savers.length;
         const row = new Adw.ExpanderRow({
             title: esc(playlist.name),
@@ -702,6 +740,10 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             expanded,
         });
         row.connect('notify::expanded', () => onExpanded(row.expanded));
+        if (inUse) {
+            row.add_suffix(new Gtk.Label({label: 'In use', valign: Gtk.Align.CENTER,
+                tooltip_text: 'Chosen under General ▸ Source', css_classes: ['dim-label', 'caption-heading']}));
+        }
 
         const actions = [
             ['document-edit-symbolic', 'Rename', rename],
@@ -876,7 +918,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
 
     // ── History page ────────────────────────────────────────────────────
 
-    _buildHistoryPage(settings, window) {
+    _buildHistoryPage(settings, window, generalPage) {
         const file = historyFile(this.uuid);
         const page = new Adw.PreferencesPage({
             title: 'History',
@@ -885,13 +927,21 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
 
         const header = new Adw.PreferencesGroup();
         page.add(header);
-        const logRow = new Adw.SwitchRow({
-            title: 'Keep a history of screensaver runs',
-            subtitle: 'Stored only on this computer',
-        });
-        settings.bind('log-history', logRow, 'active', Gio.SettingsBindFlags.DEFAULT);
-        header.add(logRow);
 
+        // Shown while recording is off; existing entries stay visible.
+        const off = new Adw.Banner({
+            title: 'Recording is off, so new runs are not added',
+            button_label: 'Settings',
+            revealed: !settings.get_boolean('log-history'),
+            margin_bottom: 12,
+        });
+        off.connect('button-clicked', () => window.set_visible_page(generalPage));
+        settings.connect('changed::log-history', () => {
+            off.revealed = !settings.get_boolean('log-history');
+        });
+        header.add(off);
+
+        // Full width, like the Library search.
         const toolbar = new Gtk.Box({spacing: 6});
         const search = new Gtk.SearchEntry({placeholder_text: 'Filter by screensaver', hexpand: true});
         const refresh = new Gtk.Button({icon_name: 'view-refresh-symbolic', tooltip_text: 'Reload'});
@@ -899,7 +949,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const clear = new Gtk.Button({icon_name: 'user-trash-symbolic', tooltip_text: 'Clear history',
             css_classes: ['destructive-action']});
         [search, refresh, open, clear].forEach(w => toolbar.append(w));
-        header.set_header_suffix(toolbar);
+        header.add(toolbar);
 
         let groups = [];
         let days = 30;
@@ -935,7 +985,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 const empty = new Adw.PreferencesGroup({
                     description: settings.get_boolean('log-history')
                         ? 'Nothing logged yet. Runs appear here after a screensaver has been shown.'
-                        : 'History is off. Turn it on above to start logging when each screensaver runs.',
+                        : 'Nothing recorded. Turn on recording under General ▸ History.',
                 });
                 add(empty);
                 return;
@@ -1058,7 +1108,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         });
 
         const add = new Adw.PreferencesGroup({
-            title: 'Add a screensaver',
+            title: 'Add a custom screensaver',
             description: 'Any program that opens a window works: it is started once per monitor and ' +
                 'shown fullscreen over the lock screen. In the command, %w and %h are replaced by ' +
                 'the monitor size. X11 programs run through Xwayland. Only add programs you trust: ' +
@@ -1078,7 +1128,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         });
         add.add(addButton);
 
-        const existing = new Adw.PreferencesGroup({title: 'Your screensavers'});
+        const existing = new Adw.PreferencesGroup({title: 'Your custom screensavers'});
         page.add(existing);
         let rows = [];
 
@@ -1139,7 +1189,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             settings.set_strv('custom-savers', [...settings.get_strv('custom-savers'), `${label}|${cmd}`]);
             name.text = '';
             command.text = '';
-            window.add_toast(new Adw.Toast({title: `Added “${label}”. Reopen this window to select it.`}));
+            window.add_toast(new Adw.Toast({title: `Added “${label}” to the Library`}));
         });
 
         return page;

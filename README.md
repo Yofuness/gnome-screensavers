@@ -11,20 +11,21 @@ XScreenSaver hack, or any program you add yourself, can run instead.
 
 - A **key press or click** stops the saver and shows the unlock prompt. Moving the mouse doesn't.
 - The saver runs until GNOME's **Screen Blank** time (Settings ▸ Power), then the screen blanks
-  as usual. With Screen Blank set to *Never*, it runs until you press a key. You can choose a fixed time
-  instead in the extension's settings.
+  as usual. With Screen Blank set to *Never*, it runs until you press a key. A fixed time can be set
+  under General ▸ Display duration.
 - Each monitor runs its own copy of the saver.
-- **Per-screensaver settings**: the ⚙ button next to a saver opens its options (speed, density,
+- **Per-screensaver settings**: the ⚙ button next to a screensaver in the Library opens its options (speed, density,
   colours and so on), generated from XScreenSaver's own config files.
 - **Clock and now playing** in the top-left corner of the primary monitor, resizable from 50% to 200%.
   Media keys (play/pause/next/previous) control your player without stopping the screensaver.
-- **Playlists**: named lists of screensavers, shuffled or played in order. The active playlist
-  supplies every screensaver, including rotations and skips. Playlists can be exported to a file and
+- **Source** (General page): the screensaver selected in the Library, a random starred one, or a
+  playlist.
+- **Playlists**: named lists of screensavers, shuffled or played in order. Playlists can be exported to a file and
   imported again (or shared).
-- **Rotation**: switch to the next screensaver every few minutes.
+- **Change screensaver**: move on to the next one every few minutes.
 - **Skip key** (Right arrow by default, configurable): jump to the next screensaver without
   dismissing it.
-- **Comes back** after you dismiss it, once the lock screen has been left alone for a set time.
+- **Resume after dismissal**: comes back after you dismiss it, once the lock screen has been left alone for a set time.
 - **History**: a local log of which screensaver ran when, browsable in the settings window. Keeps the
   newest 2000 runs by default (configurable up to 1,000,000); can be turned off.
 - **Test button** (top left of the settings window): run the whole lock-screen experience (random
