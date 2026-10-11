@@ -243,11 +243,12 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
     _openOptions(settings, registry, saver, window) {
         const options = registry.options(saver.id);
         const key = optionsKey(saver.id);
-        const values = {...readSaverOptions(settings)[key] ?? {}};
+        const defaults = registry.defaults(saver.id);
+        const values = registry.values(saver.id);
         const save = () => {
             const all = readSaverOptions(settings);
             const changed = Object.fromEntries(Object.entries(values)
-                .filter(([id, v]) => options.find(o => o.id === id)?.default !== v));
+                .filter(([id, v]) => defaults[id] !== v));
             if (Object.keys(changed).length)
                 all[key] = changed;
             else
@@ -272,7 +273,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
 
         const widgets = [];
         for (const o of options) {
-            const current = o.id in values ? values[o.id] : o.default;
+            const current = values[o.id];
             if (o.type === 'number') {
                 const integer = [o.low, o.high, o.default].every(Number.isInteger);
                 const range = o.high - o.low;
@@ -293,14 +294,14 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 adj.connect('value-changed', () => set(o.id,
                     integer ? Math.round(adj.value) : Math.round(adj.value * 1000) / 1000));
                 widgets.push(() => {
-                    adj.value = o.default;
+                    adj.value = defaults[o.id];
                 });
                 group.add(row);
             } else if (o.type === 'boolean') {
                 const row = new Adw.SwitchRow({title: esc(o.label), active: !!current});
                 row.connect('notify::active', () => set(o.id, row.active));
                 widgets.push(() => {
-                    row.active = o.default;
+                    row.active = defaults[o.id];
                 });
                 group.add(row);
             } else if (o.type === 'select') {
@@ -311,7 +312,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 });
                 row.connect('notify::selected', () => set(o.id, o.choices[row.selected].id));
                 widgets.push(() => {
-                    row.selected = Math.max(0, o.choices.findIndex(c => c.id === o.default));
+                    row.selected = Math.max(0, o.choices.findIndex(c => c.id === defaults[o.id]));
                 });
                 group.add(row);
             } else {
@@ -329,8 +330,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const reset = new Gtk.Button({label: 'Reset to defaults'});
         reset.connect('clicked', () => {
             widgets.forEach(r => r());
-            for (const k of Object.keys(values))
-                delete values[k];
+            Object.assign(values, defaults);
             save();
         });
         const play = new Gtk.Button({label: 'Preview', css_classes: ['suggested-action']});

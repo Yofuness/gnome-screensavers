@@ -12,6 +12,13 @@ import GLib from 'gi://GLib';
 const HACK_DIRS = ['/usr/lib/xscreensaver', '/usr/libexec/xscreensaver', '/usr/lib64/xscreensaver'];
 const CONFIG_DIR = '/usr/share/xscreensaver/config';
 
+// Defaults that differ from the hack's own, used until the user picks a value.
+// Sonar pings real hosts by default, which needs raw-socket privileges a
+// screensaver started by the shell may not have; its simulation needs none.
+const DEFAULT_VALUES = {
+    'xscreensaver:sonar': {ping: 'sim'},
+};
+
 Gio._promisify(Gio.File.prototype, 'load_contents_async');
 Gio._promisify(Gio.File.prototype, 'enumerate_children_async');
 Gio._promisify(Gio.File.prototype, 'query_info_async');
@@ -86,7 +93,7 @@ export function parseOptions(xml) {
     return options;
 }
 
-/** Command-line arguments for the values that differ from each option's default. */
+/** Command-line arguments for the values that differ from each hack's own default. */
 export function optionArgs(options, values) {
     const fill = (template, value) => template.trim().split(/\s+/).map(t => t.replace('%', value));
     const args = [];
@@ -268,8 +275,19 @@ export class Registry {
         return options;
     }
 
+    /** Default values for a saver's options, including our overrides. */
+    defaults(id) {
+        const values = Object.fromEntries(this.options(id).map(o => [o.id, o.default]));
+        return {...values, ...DEFAULT_VALUES[optionsKey(id)]};
+    }
+
+    /** Option values for a saver: the user's choices over the defaults. */
+    values(id) {
+        return {...this.defaults(id), ...readSaverOptions(this._settings)[optionsKey(id)]};
+    }
+
     _extraArgs(id) {
-        return optionArgs(this.options(id), readSaverOptions(this._settings)[optionsKey(id)] ?? {});
+        return optionArgs(this.options(id), this.values(id));
     }
 
     /**

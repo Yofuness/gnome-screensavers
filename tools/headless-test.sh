@@ -268,6 +268,16 @@ run() {
     call Stop >/dev/null; sleep 2
     set_key saver-options "'{}'"
 
+    echo "== sonar defaults to simulation (no ping privileges needed)"
+    call Preview 'xscreensaver:sonar' >/dev/null; sleep 3
+    check "sonar started with --ping simulation" "pgrep -af /usr/lib/xscreensaver/sonar | grep -q -- '--ping simulation'"
+    call Stop >/dev/null; sleep 2
+    set_key saver-options "'{\"xscreensaver:sonar\": {\"ping\": \"sn\"}}'"
+    call Preview 'xscreensaver:sonar' >/dev/null; sleep 3
+    check "user's choice overrides the default" "pgrep -af /usr/lib/xscreensaver/sonar | grep -qv -- '--ping'"
+    call Stop >/dev/null; sleep 2
+    set_key saver-options "'{}'"
+
     echo "== clock overlay on the primary monitor"
     call Preview 'flurry:classic' >/dev/null; sleep 4
     shot "$T/shots/overlay-on.png"
