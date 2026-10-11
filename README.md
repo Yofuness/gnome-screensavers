@@ -101,7 +101,12 @@ your real session isn't touched. It then checks that:
 - history is written and trimmed to its limit;
 - the Preview button's run ends with its notice and never locks.
 
-Choose which hacks to test with `HACKS="glmatrix pipes" make test`.
+It also checks that no monitor is ever left uncovered (lock screen or desktop showing through) during
+skips, mashed skips, rotation and staggered changes.
+
+Choose which hacks to test with `HACKS="glmatrix pipes" make test`, or run only some scenarios with
+`SCENARIOS="monitors overlay" make test` (scenario names are listed in `tools/headless-test.sh`). The
+pixel checks need `python-numpy`.
 
 ## License
 

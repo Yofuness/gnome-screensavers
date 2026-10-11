@@ -129,8 +129,10 @@ These keep it cohesive, so follow them in new code.
    change what's running (source, monitor mode) apply from the next start.
 7. **Never block the shell.** File IO is async; savers are separate processes that get SIGTERM, then a
    force kill after 1.5 s.
-8. **Every behaviour has a headless test.** A new flow gets a scenario in `tools/headless-test.sh`
-   (2 monitors, 3840×1080), driven through `debug.js`.
+8. **Every behaviour has a headless test.** A new flow gets a scenario function in
+   `tools/headless-test.sh` (2 monitors, 3840×1080), driven through `debug.js`. Rule 1 is tested
+   directly: `Covered` counts the monitors that show an opaque saver, sampled through every kind of
+   change.
 
 ## Settings keys by area
 

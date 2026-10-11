@@ -8,15 +8,21 @@
 #   tools/headless-test.sh start            start the test shell (two virtual monitors)
 #   tools/headless-test.sh call METHOD ...  call a debug D-Bus method (Lock, Preview, Key, ...)
 #   tools/headless-test.sh shot FILE.png    screenshot of the test shell
+#   tools/headless-test.sh prefs            start the shell if needed and open the settings window
 #   tools/headless-test.sh log              show the shell's log
 #   tools/headless-test.sh stop             stop it
 #   tools/headless-test.sh run              start, run the end-to-end checks, stop
+#
+# SCENARIOS="monitors overlay" limits `run` to those scenarios (for iterating;
+# always run them all before committing).  Pixel checks need python-numpy.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 UUID=screensavers@yofuness.github.io
 T=${SCREENSAVERS_TEST_DIR:-${TMPDIR:-/tmp}/screensavers-test}
 MONITORS=${SCREENSAVERS_TEST_MONITORS:-"1920x1080 1920x1080"}
+# Unix socket paths are limited to 108 bytes, so the runtime dir must be short.
+RUNTIME=/tmp/sstest-$(id -u)
 
 bus() { cat "$T/bus"; }
 
@@ -31,8 +37,6 @@ start() {
     stop >/dev/null 2>&1 || true
     rm -rf "$T"
     mkdir -p "$T"/{data/gnome-shell/extensions,config,cache,shots}
-    # Unix socket paths are limited to 108 bytes, so the runtime dir must be short.
-    RUNTIME=/tmp/sstest-$(id -u)
     fusermount3 -u "$RUNTIME/gvfs" 2>/dev/null || true
     rm -rf "$RUNTIME"; mkdir -m 700 "$RUNTIME"
     cp -r "$ROOT/build/$UUID" "$T/data/gnome-shell/extensions/"
@@ -50,6 +54,9 @@ start() {
             dconf write /org/gnome/shell/enabled-extensions "[\"'"$UUID"'\"]"
             dconf write /org/gnome/shell/disable-user-extensions false
             dconf write /org/gnome/shell/welcome-dialog-last-shown-version "\"999\""
+            # The virtual pointer starts in the top-left hot corner; its first
+            # move would open the overview over everything.
+            dconf write /org/gnome/desktop/interface/enable-hot-corners false
             exec gnome-shell --headless --wayland --wayland-display=wayland-sstest '"${vm[*]}"'
         ' >"$T/shell.log" 2>&1 &
     echo $! >"$T/pid"
@@ -76,35 +83,126 @@ stop() {
     rm -f "$T/pid"
 }
 
+# Open the settings window in the test shell (starting it if needed).
+prefs() {
+    if [ ! -f "$T/pid" ] || ! call Status >/dev/null 2>&1; then
+        start
+    fi
+    DBUS_SESSION_BUS_ADDRESS=$(bus) XDG_RUNTIME_DIR="$RUNTIME" WAYLAND_DISPLAY=wayland-sstest \
+        XDG_CONFIG_HOME="$T/config" XDG_DATA_HOME="$T/data" \
+        bash -c 'dbus-update-activation-environment WAYLAND_DISPLAY XDG_RUNTIME_DIR XDG_CONFIG_HOME XDG_DATA_HOME &&
+            gnome-extensions prefs '"$UUID"
+    sleep 3
+    echo "settings window open; tabs are at y≈148 (General, Playlists, Library, History, Custom)"
+}
+
 shot() {
     call Screenshot "$1" >/dev/null
 }
 
-# Mean brightness and difference between two screenshots, via ffmpeg-free python.
-analyze() {
-    python3 -I - "$@" <<'EOF'
+# ── Pixel checks ───────────────────────────────────────────────────────────
+# All load a screenshot as an (height, width, channels) array.  Full
+# resolution where it matters: sparse savers change too few pixels for an
+# average to notice.
+
+PIXELS_PY='
 import sys
+import numpy as np
 import gi
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import GdkPixbuf
-def load(p):
-    pb = GdkPixbuf.Pixbuf.new_from_file(p)
-    return pb.get_pixels(), pb.get_n_channels()
-a, ca = load(sys.argv[1])
-b, cb = load(sys.argv[2])
-step = 97
-mean = sum(a[i] for i in range(0, len(a), step)) / (len(a) / step)
-# Count clearly changed pixels at full resolution: sparse savers (glmatrix)
-# change few pixels, which an average would hide.
-n = min(len(a), len(b))
-changed = sum(1 for i in range(1, n, ca) if abs(a[i] - b[i]) > 40)
-print(f"{mean:.2f} {changed}")
-EOF
+def load(path):
+    pb = GdkPixbuf.Pixbuf.new_from_file(path)
+    h, w, n, rs = pb.get_height(), pb.get_width(), pb.get_n_channels(), pb.get_rowstride()
+    raw = np.frombuffer(pb.get_pixels(), np.uint8)
+    raw = np.pad(raw, (0, h * rs - raw.size))
+    return raw.reshape(h, rs)[:, :w * n].reshape(h, w, n).astype(np.int32), raw
+def neutral_white(rgb):
+    lo, hi = rgb.min(axis=2), rgb.max(axis=2)
+    return (lo > 150) & (hi - lo < 20)
+'
+
+pixels() {
+    local code=$1; shift
+    python3 -I -c "$PIXELS_PY$code" "$@"
 }
+
+# analyze A B: mean brightness of A, and how many pixels clearly changed.
+analyze() {
+    pixels '
+a, araw = load(sys.argv[1])
+b, braw = load(sys.argv[2])
+step = 97
+mean = araw[::step].astype(np.int64).sum() / (araw.size / step)
+n = min(araw.size, braw.size)
+changed = int((np.abs(araw[1:n:a.shape[2]].astype(np.int32) - braw[1:n:a.shape[2]].astype(np.int32)) > 40).sum())
+print(f"{mean:.2f} {changed}")
+' "$@"
+}
+
+# bright_extent FILE: width of the lit (neutral white) area in the top-left of monitor 0.
+bright_extent() {
+    pixels '
+mask = neutral_white(load(sys.argv[1])[0][0:500:2, 0:1400:2, :3])
+xs = np.nonzero(mask.any(axis=0))[0]
+print(int(xs.max()) * 2 if xs.size else 0)
+' "$@"
+}
+
+# white_in FILE X Y W H: count of neutral-white pixels (overlay text) in a region.
+white_in() {
+    pixels '
+x0, y0, w, h = map(int, sys.argv[2:6])
+print(int(neutral_white(load(sys.argv[1])[0][y0:y0 + h:2, x0:x0 + w:2, :3]).sum()))
+' "$@"
+}
+
+# mirror_match FILE: both monitors (side by side, 1920 wide each) show the same
+# picture.  The top 320 rows are skipped: the clock is only on the primary.
+mirror_match() {
+    pixels '
+img = load(sys.argv[1])[0]
+a = img[320:1080:4, 0:1920:4, :3]
+b = img[320:1080:4, 1920:3840:4, :3]
+diff = int((np.abs(a - b).sum(axis=2) > 60).sum())
+lit = int((a.sum(axis=2) > 60).sum())
+print(f"     differing samples={diff} lit samples={lit}")
+sys.exit(0 if lit > 20 and diff < lit / 10 else 1)
+' "$@"
+}
+
+# centre_lit FILE: something light sits in the middle of monitor 0.
+centre_lit() {
+    pixels '
+region = load(sys.argv[1])[0][500:580, 760:1160, :3]
+sys.exit(0 if int((region.min(axis=2) > 200).sum()) > 200 else 1)
+' "$@"
+}
+
+# ── Checks and waiting ────────────────────────────────────────────────────
 
 check() {
     local name=$1 cond=$2
     if eval "$cond"; then echo "  ok   $name"; else echo "  FAIL $name"; FAILED=1; fi
+}
+
+now_ms() { local t=${EPOCHREALTIME/./}; echo $((t / 1000)); }
+
+# wait_for SECONDS CONDITION: poll until the condition holds; false on timeout.
+wait_for() {
+    local end; end=$(( $(now_ms) + $(awk -v s="$1" 'BEGIN { printf "%d", s * 1000 }') ))
+    while :; do
+        eval "$2" && return 0
+        [ "$(now_ms)" -ge "$end" ] && return 1
+        sleep 0.2
+    done
+}
+
+# check_within SECONDS NAME CONDITION: like check, but passes as soon as the
+# condition holds, and fails only after SECONDS.
+check_within() {
+    local timeout=$1 name=$2 cond=$3
+    if wait_for "$timeout" "$cond"; then echo "  ok   $name"; else echo "  FAIL $name"; FAILED=1; fi
 }
 
 is_locked() {
@@ -115,108 +213,37 @@ saver_pids() {
     pgrep -f -s "$(cat "$T/pid")" -- "$1" || true
 }
 
-# corner_brighter ON OFF: top-left corner of monitor 0 is brighter in ON.
-corner_brighter() {
-    python3 -I - "$1" "$2" <<'EOF'
-import sys
-import gi
-gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import GdkPixbuf
-def corner(p):
-    pb = GdkPixbuf.Pixbuf.new_from_file(p).new_subpixbuf(0, 0, 500, 260)
-    px, n, rs = pb.get_pixels(), pb.get_n_channels(), pb.get_rowstride()
-    return sum(px[y * rs + x * n] for y in range(0, 260, 3) for x in range(0, 500, 3))
-on, off = corner(sys.argv[1]), corner(sys.argv[2])
-print(f"     corner brightness on={on} off={off}")
-sys.exit(0 if on > off * 1.2 else 1)
-EOF
-}
-
-# bright_extent FILE: width of the lit area in the top-left of monitor 0.
-bright_extent() {
-    python3 -I - "$1" <<'EOF'
-import sys
-import gi
-gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import GdkPixbuf
-pb = GdkPixbuf.Pixbuf.new_from_file(sys.argv[1])
-px, n, rs = pb.get_pixels(), pb.get_n_channels(), pb.get_rowstride()
-right = 0
-for y in range(0, 500, 2):
-    for x in range(0, 1400, 2):
-        o = y * rs + x * n
-        r, g, b = px[o], px[o + 1], px[o + 2]
-        # Neutral white (the clock text); the saver's bright pixels are tinted.
-        if min(r, g, b) > 150 and max(r, g, b) - min(r, g, b) < 20:
-            right = max(right, x)
-print(right)
-EOF
-}
-
-# white_in FILE X Y W H: count of neutral-white pixels (overlay text) in a region.
-white_in() {
-    python3 -I - "$@" <<'EOF'
-import sys
-import gi
-gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import GdkPixbuf
-x0, y0, w, h = map(int, sys.argv[2:6])
-pb = GdkPixbuf.Pixbuf.new_from_file(sys.argv[1]).new_subpixbuf(x0, y0, w, h)
-px, n, rs = pb.get_pixels(), pb.get_n_channels(), pb.get_rowstride()
-count = 0
-for y in range(0, h, 2):
-    for x in range(0, w, 2):
-        o = y * rs + x * n
-        r, g, b = px[o], px[o + 1], px[o + 2]
-        if min(r, g, b) > 150 and max(r, g, b) - min(r, g, b) < 20:
-            count += 1
-print(count)
-EOF
-}
-
-# mirror_match FILE: both monitors (side by side, 1920 wide each) show the same
-# picture.  The top 320 rows are skipped: the clock is only on the primary.
-mirror_match() {
-    python3 -I - "$1" <<'EOF'
-import sys
-import gi
-gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import GdkPixbuf
-pb = GdkPixbuf.Pixbuf.new_from_file(sys.argv[1])
-px, n, rs = pb.get_pixels(), pb.get_n_channels(), pb.get_rowstride()
-diff = lit = 0
-for y in range(320, 1080, 4):
-    for x in range(0, 1920, 4):
-        a, b = y * rs + x * n, y * rs + (x + 1920) * n
-        d = sum(abs(px[a + c] - px[b + c]) for c in range(3))
-        diff += d > 60
-        lit += sum(px[a:a + 3]) > 60
-print(f"     differing samples={diff} lit samples={lit}")
-sys.exit(0 if lit > 20 and diff < lit / 10 else 1)
-EOF
-}
-
-# savers_json: the saver id per slot, e.g. ["a","b"].
-savers_json() {
-    call Status | grep -o '"savers":\[[^]]*\]' | sed 's/"savers"://'
-}
-
-# centre_lit FILE: something light sits in the middle of monitor 0.
-centre_lit() {
-    python3 -I - "$1" <<'EOF'
-import sys
-import gi
-gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import GdkPixbuf
-pb = GdkPixbuf.Pixbuf.new_from_file(sys.argv[1]).new_subpixbuf(760, 500, 400, 80)
-px, n, rs = pb.get_pixels(), pb.get_n_channels(), pb.get_rowstride()
-white = sum(1 for y in range(80) for x in range(400) if min(px[y*rs+x*n:y*rs+x*n+3]) > 200)
-sys.exit(0 if white > 200 else 1)
-EOF
-}
-
 shown_count() {
     call Status | grep -o '"shown":true' | wc -l
+}
+
+covered() {
+    call Covered | sed 's/.*uint32 \([0-9]*\).*/\1/'
+}
+
+# Every monitor shows its saver and no handover is in progress.
+settled() {
+    [ "$(shown_count)" -ge 2 ] && call Status | grep -q '"outgoing":false' && [ "$(covered)" -eq 2 ]
+}
+
+# No session and no saver processes left (the previous scenario is gone).
+clean() {
+    call Status | grep -q '"session":null' && [ -z "$(saver_pids /usr/lib/xscreensaver/)" ]
+}
+
+stop_saver() {
+    call Stop >/dev/null
+    wait_for 6 clean || echo "     (warning: saver still running after Stop)"
+}
+
+# watch_covered SECONDS: sample how many times not every monitor was covered.
+watch_covered() {
+    local end bad=0; end=$(( $(now_ms) + $1 * 1000 ))
+    while [ "$(now_ms)" -lt "$end" ]; do
+        [ "$(covered)" -lt 2 ] && bad=$((bad + 1))
+        sleep 0.05
+    done
+    echo "$bad"
 }
 
 set_key() {
@@ -224,277 +251,228 @@ set_key() {
         dconf write "/org/gnome/shell/extensions/screensavers/$1" "$2"
 }
 
-# expect_animating NAME: two screenshots a second apart must be non-black and differ.
+# expect_animating NAME: once shown, the screen is not black, and a later
+# screenshot (every 2 s, up to 6 s) differs from the first.  Some savers pause
+# between patterns (abstractile), so one fixed pair could land in a pause.
 expect_animating() {
-    local S="$T/shots" tag; tag=$(echo "$1" | tr -c 'a-zA-Z0-9\n' '_')
-    shot "$S/$tag-1.png"; sleep 2; shot "$S/$tag-2.png"
-    read -r mean diff < <(analyze "$S/$tag-1.png" "$S/$tag-2.png" 2>/dev/null)
+    local S="$T/shots" tag mean diff=0 i; tag=$(echo "$1" | tr -c 'a-zA-Z0-9\n' '_')
+    wait_for 8 "[ \$(shown_count) -ge 2 ]" || true
+    sleep 2
+    shot "$S/$tag-1.png"
+    for i in 2 3 4; do
+        sleep 2; shot "$S/$tag-$i.png"
+        read -r mean diff < <(analyze "$S/$tag-1.png" "$S/$tag-$i.png" 2>/dev/null)
+        [ "$diff" -gt 1000 ] && break
+    done
     echo "     brightness=$mean changed_pixels=$diff"
     check "$1: screen not black" "awk 'BEGIN{exit !($mean > 1)}'"
     check "$1: animating" "[ $diff -gt 1000 ]"
 }
 
 FLURRY='/usr/lib/xscreensaver/flurry --preset'
+saver_now() { call Status | grep -o '"saver":"[^"]*"'; }
 
-run() {
-    FAILED=0
-    start
-    sleep 2
-    # Most scenarios count one saver process per monitor; the monitor modes
-    # get their own scenario below.
-    set_key monitor-mode "'same'"
+# savers_json: the saver id per slot, e.g. ["a","b"].
+savers_json() {
+    call Status | grep -o '"savers":\[[^]]*\]' | sed 's/"savers"://'
+}
 
+# ── Scenarios ─────────────────────────────────────────────────────────────
+
+scenario_lock() {
     echo "== lock shows Flurry over the lock screen"
     call Lock >/dev/null
-    sleep 6
+    check_within 8 "both monitors show a clone" "[ \$(shown_count) -eq 2 ]"
     expect_animating "flurry on lock"
     check "one flurry per monitor" "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]"
-    check "both monitors show a clone" "[ \$(shown_count) -eq 2 ]"
 
     echo "== mouse motion does not dismiss"
     call Motion >/dev/null; sleep 1.5
     check "still running after motion" "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]"
 
     echo "== a key press dismisses it, the lock screen stays"
-    call Key >/dev/null; sleep 2.5
+    call Key >/dev/null
+    check_within 4 "saver processes gone" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
     shot "$T/shots/after-key.png"
-    check "saver processes gone" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
     check "still locked" "is_locked"
 
     echo "== unlocking while a saver runs stops it"
-    call Unlock >/dev/null; sleep 2
-    call Lock >/dev/null; sleep 5
-    check "saver back on relock" "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]"
-    call Unlock >/dev/null; sleep 2.5
-    check "saver gone after unlock" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
-    check "unlocked" "! is_locked"
+    call Unlock >/dev/null; wait_for 4 "! is_locked" || true
+    call Lock >/dev/null
+    check_within 8 "saver back on relock" "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]"
+    call Unlock >/dev/null
+    check_within 5 "saver gone after unlock" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
+    check_within 3 "unlocked" "! is_locked"
 
     echo "== a click dismisses a preview"
-    call Preview 'flurry:fire' >/dev/null; sleep 3
-    check "preview running" "[ \$(shown_count) -eq 2 ]"
-    call Click >/dev/null; sleep 2.5
-    check "preview gone after click" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
+    call Preview 'flurry:fire' >/dev/null
+    check_within 6 "preview running" "[ \$(shown_count) -eq 2 ]"
+    call Click >/dev/null
+    check_within 5 "preview gone after click" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
+    wait_for 4 clean || true
 
     echo "== run time over: saver stops and GNOME's fade/blank continues"
     set_key run-time 4
     call Lock >/dev/null; sleep 4
     check "running before run time" "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]"
-    sleep 5
-    check "stopped after run time" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
-    check "shield reports active (GNOME may blank now)" "call Status | grep -q '\"active\":true'"
-    call Unlock >/dev/null; sleep 2
+    check_within 6 "stopped after run time" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
+    check_within 3 "shield reports active (GNOME may blank now)" "call Status | grep -q '\"active\":true'"
+    call Unlock >/dev/null; wait_for 4 "! is_locked" || true
     set_key run-time -1
 
     echo "== auto-lock: session goes idle -> saver first, then GNOME locks underneath"
-    call Idle >/dev/null; sleep 3
-    check "saver running on idle" "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]"
-    sleep 10
-    check "session locked after the fade time" "is_locked"
+    call Idle >/dev/null
+    check_within 6 "saver running on idle" "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]"
+    check_within 15 "session locked after the fade time" "is_locked"
     check "saver still running once locked" "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]"
     expect_animating "flurry after auto-lock"
-    call Key >/dev/null; sleep 2.5
-    check "key dismisses, lock remains" "[ -z \"\$(saver_pids '$FLURRY')\" ] && is_locked"
-    call Unlock >/dev/null; sleep 2
+    call Key >/dev/null
+    check_within 5 "key dismisses, lock remains" "[ -z \"\$(saver_pids '$FLURRY')\" ] && is_locked"
+    call Unlock >/dev/null; wait_for 4 "! is_locked" || true
 
     echo "== a crashing saver removes the overlay"
-    call Preview 'flurry:classic' >/dev/null; sleep 3
+    call Preview 'flurry:classic' >/dev/null
+    wait_for 6 "[ \$(shown_count) -eq 2 ]" || true
     pkill -KILL -f -s "$(cat "$T/pid")" -- "$FLURRY" || true
-    sleep 1.5
-    check "session cleared" "call Status | grep -q '\"session\":null'"
+    check_within 4 "session cleared" "call Status | grep -q '\"session\":null'"
+}
 
+scenario_hacks() {
     for hack in ${HACKS:-glmatrix fireworkx molecule pipes abstractile galaxy}; do
         [ "$hack" = flurry ] && continue
         echo "== xscreensaver: $hack"
-        call Preview "xscreensaver:$hack" >/dev/null; sleep 5
-        check "$hack: window shown on both monitors" "[ \$(shown_count) -eq 2 ]"
+        call Preview "xscreensaver:$hack" >/dev/null
+        check_within 8 "$hack: window shown on both monitors" "[ \$(shown_count) -eq 2 ]"
         expect_animating "$hack"
-        call Stop >/dev/null; sleep 2.5
-        check "$hack: processes gone" "[ -z \"\$(saver_pids /usr/lib/xscreensaver/$hack)\" ]"
+        call Stop >/dev/null
+        check_within 5 "$hack: processes gone" "[ -z \"\$(saver_pids /usr/lib/xscreensaver/$hack)\" ]"
+        wait_for 4 clean || true
     done
+}
 
+scenario_options() {
     echo "== per-hack options reach the command line"
     set_key saver-options "'{\"xscreensaver:glmatrix\": {\"density\": 10, \"fog\": false}}'"
-    call Preview 'xscreensaver:glmatrix' >/dev/null; sleep 3
-    check "glmatrix got --density 10 --no-fog" "pgrep -af /usr/lib/xscreensaver/glmatrix | grep -q -- '--density 10 --no-fog'"
-    call Stop >/dev/null; sleep 2
+    call Preview 'xscreensaver:glmatrix' >/dev/null
+    check_within 6 "glmatrix got --density 10 --no-fog" "pgrep -af /usr/lib/xscreensaver/glmatrix | grep -q -- '--density 10 --no-fog'"
+    stop_saver
     set_key saver-options "'{}'"
 
     echo "== sonar defaults to simulation (no ping privileges needed)"
-    call Preview 'xscreensaver:sonar' >/dev/null; sleep 3
-    check "sonar started with --ping simulation" "pgrep -af /usr/lib/xscreensaver/sonar | grep -q -- '--ping simulation'"
-    call Stop >/dev/null; sleep 2
+    call Preview 'xscreensaver:sonar' >/dev/null
+    check_within 6 "sonar started with --ping simulation" "pgrep -af /usr/lib/xscreensaver/sonar | grep -q -- '--ping simulation'"
+    stop_saver
     set_key saver-options "'{\"xscreensaver:sonar\": {\"ping\": \"sn\"}}'"
-    call Preview 'xscreensaver:sonar' >/dev/null; sleep 3
-    check "user's choice overrides the default" "pgrep -af /usr/lib/xscreensaver/sonar | grep -qv -- '--ping'"
-    call Stop >/dev/null; sleep 2
+    call Preview 'xscreensaver:sonar' >/dev/null
+    check_within 6 "user's choice overrides the default" "pgrep -af /usr/lib/xscreensaver/sonar | grep -qv -- '--ping'"
+    stop_saver
     set_key saver-options "'{}'"
+}
 
+scenario_playlists() {
     echo "== playlist in order + skip key"
     set_key playlists "'[{\"name\": \"Pair\", \"savers\": [\"flurry:fire\", \"xscreensaver:abstractile\"], \"shuffle\": false}]'"
     set_key active-playlist "'Pair'"
-    set_key preview-request "'@test#2'"; sleep 4
-    check "playlist starts with its first saver" "call Status | grep -q '\"saver\":\"flurry:fire\"'"
-    call KeyVal 65363 >/dev/null; sleep 4
-    check "skip key moves to the next saver" "call Status | grep -q '\"saver\":\"xscreensaver:abstractile\"'"
-    check "skip did not dismiss" "[ \$(shown_count) -eq 2 ]"
-    check "old saver's processes gone after the skip" "[ -z \"\$(saver_pids '$FLURRY fire')\" ]"
-    call KeyVal 65363 >/dev/null; sleep 4
-    check "in-order playlist loops back to the start" "call Status | grep -q '\"saver\":\"flurry:fire\"'"
-    call Key >/dev/null; sleep 2.5
-    check "other keys still dismiss" "[ -z \"\$(saver_pids /usr/lib/xscreensaver/)\" ]"
-    check "history records the skip" "grep -q '\"ended\":\"skipped\"' '$T/data/$UUID/history.jsonl'"
+    set_key preview-request "'@test#2'"
+    check_within 6 "playlist starts with its first saver" "call Status | grep -q '\"saver\":\"flurry:fire\"'"
+    wait_for 6 settled || true
+    call KeyVal 65363 >/dev/null
+    local gaps; gaps=$(watch_covered 2)
+    check_within 6 "skip key moves to the next saver" "call Status | grep -q '\"saver\":\"xscreensaver:abstractile\"'"
+    check_within 6 "skip did not dismiss" "[ \$(shown_count) -eq 2 ]"
+    check_within 4 "old saver's processes gone after the skip" "[ -z \"\$(saver_pids '$FLURRY fire')\" ]"
+    echo "     samples with a monitor uncovered during the skip: $gaps"
+    check "skip never uncovers a monitor" "[ $gaps -eq 0 ]"
+    wait_for 6 settled || true
+    call KeyVal 65363 >/dev/null
+    check_within 6 "in-order playlist loops back to the start" "call Status | grep -q '\"saver\":\"flurry:fire\"'"
+    wait_for 6 settled || true
+    call Key >/dev/null
+    check_within 5 "other keys still dismiss" "[ -z \"\$(saver_pids /usr/lib/xscreensaver/)\" ]"
+    check_within 3 "history records the skip" "grep -q '\"ended\":\"skipped\"' '$T/data/$UUID/history.jsonl'"
+
     echo "== shuffled playlist plays everything once before repeating"
     set_key playlists "'[{\"name\": \"Trio\", \"savers\": [\"flurry:fire\", \"flurry:water\", \"xscreensaver:abstractile\"], \"shuffle\": true}]'"
     set_key active-playlist "'Trio'"
     local played=""
-    set_key preview-request "'@test#4'"; sleep 4
-    played="$played $(call Status | grep -o '"saver":"[^"]*"')"
-    call KeyVal 65363 >/dev/null; sleep 4
-    played="$played $(call Status | grep -o '"saver":"[^"]*"')"
-    call KeyVal 65363 >/dev/null; sleep 4
-    played="$played $(call Status | grep -o '"saver":"[^"]*"')"
-    echo "     (mashing the skip key)"
-    for _ in 1 2 3 4 5 6 7 8 9 10; do call KeyVal 65363 >/dev/null; sleep 0.15; done
-    sleep 5
-    check "mashing skip leaves one saver per monitor" "[ \$(shown_count) -eq 2 ] && [ \$(saver_pids /usr/lib/xscreensaver/ | wc -l) -eq 2 ]"
-    call Key >/dev/null; sleep 2.5
+    set_key preview-request "'@test#4'"; wait_for 6 settled || true
+    played="$played $(saver_now)"
+    call KeyVal 65363 >/dev/null; sleep 0.5; wait_for 6 settled || true
+    played="$played $(saver_now)"
+    call KeyVal 65363 >/dev/null; sleep 0.5; wait_for 6 settled || true
+    played="$played $(saver_now)"
     echo "     played:$played"
     local distinct
     distinct=$(echo "$played" | tr ' ' '\n' | grep . | sort -u | wc -l)
     check "three different savers in a row" "[ $distinct -eq 3 ]"
+
+    echo "     (mashing the skip key)"
+    local end mash_gaps=0; end=$(( $(now_ms) + 4000 ))
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        call KeyVal 65363 >/dev/null
+        [ "$(covered)" -lt 2 ] && mash_gaps=$((mash_gaps + 1))
+        sleep 0.15
+    done
+    while [ "$(now_ms)" -lt "$end" ]; do
+        [ "$(covered)" -lt 2 ] && mash_gaps=$((mash_gaps + 1))
+        sleep 0.05
+    done
+    check_within 6 "mashing skip leaves one saver per monitor" "settled && [ \$(shown_count) -eq 2 ] && [ \$(saver_pids /usr/lib/xscreensaver/ | wc -l) -eq 2 ]"
+    echo "     samples with a monitor uncovered while mashing: $mash_gaps"
+    check "mashing never uncovers a monitor" "[ $mash_gaps -eq 0 ]"
+    call Key >/dev/null; wait_for 5 clean || true
     set_key active-playlist "'Pair'"
 
     set_key skip-key "uint32 0"
-    set_key preview-request "'@test#3'"; sleep 4
-    call KeyVal 65363 >/dev/null; sleep 2.5
-    check "with no skip key, Right dismisses" "[ -z \"\$(saver_pids /usr/lib/xscreensaver/)\" ]"
+    set_key preview-request "'@test#3'"; wait_for 6 settled || true
+    call KeyVal 65363 >/dev/null
+    check_within 4 "with no skip key, Right dismisses" "[ -z \"\$(saver_pids /usr/lib/xscreensaver/)\" ]"
     set_key skip-key "uint32 65363"
     set_key active-playlist "''"
     set_key playlists "'[]'"
+}
 
+scenario_overlay() {
     echo "== clock overlay on the primary monitor"
-    call Preview 'flurry:classic' >/dev/null; sleep 4
+    # glmatrix and white pixels only: Flurry's white-hot core can drift into
+    # the corner and look like the clock.
+    call Preview 'xscreensaver:glmatrix' >/dev/null; wait_for 6 settled || true; sleep 1
     shot "$T/shots/overlay-on.png"
-    call Stop >/dev/null; sleep 2
+    stop_saver
     set_key show-clock false
-    call Preview 'flurry:classic' >/dev/null; sleep 4
+    call Preview 'xscreensaver:glmatrix' >/dev/null; wait_for 6 settled || true; sleep 1
     shot "$T/shots/overlay-off.png"
-    call Stop >/dev/null; sleep 2
+    stop_saver
     set_key show-clock true
-    check "clock region is brighter with the clock on" "corner_brighter '$T/shots/overlay-on.png' '$T/shots/overlay-off.png'"
+    local on off
+    on=$(white_in "$T/shots/overlay-on.png" 0 0 500 260); off=$(white_in "$T/shots/overlay-off.png" 0 0 500 260)
+    echo "     white pixels in the clock corner: on=$on off=$off"
+    check "clock region is brighter with the clock on" "[ $on -gt 100 ] && [ $off -lt \$(( on / 10 )) ]"
 
     echo "== now playing + media keys"
     : >"$T/mpris-calls"
     DBUS_SESSION_BUS_ADDRESS=$(bus) python3 "$ROOT/tools/fake-mpris.py" "$T/mpris-calls" &
     local mpris=$!
     sleep 1.5
-    call Preview 'flurry:classic' >/dev/null; sleep 3
-    check "overlay knows the playing track" "call Status | grep -q '\"media\":\"Test Track\"'"
+    call Preview 'flurry:classic' >/dev/null
+    check_within 5 "overlay knows the playing track" "call Status | grep -q '\"media\":\"Test Track\"'"
     shot "$T/shots/media.png"
     call MediaKey >/dev/null; sleep 1
     check "play/pause reached the player" "grep -q PlayPause '$T/mpris-calls'"
     check "media key did not dismiss" "[ \$(shown_count) -eq 2 ]"
-    call Stop >/dev/null; sleep 2
+    stop_saver
     kill "$mpris" 2>/dev/null || true
-
-    echo "== rotation swaps savers without a gap"
-    set_key rotate-interval 1
-    set_key random true
-    set_key favorites "['flurry:fire', 'xscreensaver:abstractile']"
-    call Preview 'flurry:classic' >/dev/null; sleep 4
-    local first; first=$(call Status | grep -o '"saver":"[^"]*"')
-    sleep 6
-    shot "$T/shots/rotated.png"
-    local second; second=$(call Status | grep -o '"saver":"[^"]*"')
-    echo "     $first -> $second"
-    check "saver changed" "[ -n \"$second\" ] && [ \"$first\" != \"$second\" ]"
-    check "old saver processes gone" "[ -z \"\$(saver_pids '$FLURRY classic')\" ]"
-    call Stop >/dev/null; sleep 2
-    set_key rotate-interval 0
-    set_key random false
-    set_key favorites "@as []"
-
-    echo "== multiple monitors: mirrored"
-    set_key monitor-mode "'mirror'"
-    call Preview 'xscreensaver:abstractile' >/dev/null; sleep 5
-    check "mirrored: one saver process" "[ \$(saver_pids /usr/lib/xscreensaver/ | wc -l) -eq 1 ]"
-    check "mirrored: both monitors covered" "[ \$(shown_count) -eq 2 ]"
-    shot "$T/shots/mirror.png"
-    check "mirrored: both monitors show the same picture" "mirror_match '$T/shots/mirror.png'"
-    call Stop >/dev/null; sleep 2
-
-    echo "== multiple monitors: different on each"
-    set_key monitor-mode "'different'"
-    set_key playlists "'[{\"name\": \"Trio\", \"savers\": [\"flurry:fire\", \"xscreensaver:glmatrix\", \"xscreensaver:abstractile\"], \"shuffle\": true}]'"
-    set_key active-playlist "'Trio'"
-    set_key preview-request "'@test#5'"; sleep 5
-    local first second
-    first=$(savers_json)
-    echo "     savers: $first"
-    check "different: two processes" "[ \$(saver_pids /usr/lib/xscreensaver/ | wc -l) -eq 2 ]"
-    check "different: each monitor its own saver" "python3 -c 'import json,sys; a=json.loads(sys.argv[1]); sys.exit(not (len(a)==2 and a[0]!=a[1]))' '$first'"
-    call KeyVal 65363 >/dev/null; sleep 5
-    second=$(savers_json)
-    echo "     after skip: $second"
-    check "different: skip changes every monitor" "python3 -c 'import json,sys; a,b=json.loads(sys.argv[1]),json.loads(sys.argv[2]); sys.exit(not (a[0]!=b[0] and a[1]!=b[1] and b[0]!=b[1]))' '$first' '$second'"
-    check "different: still covered after skip" "[ \$(shown_count) -ge 2 ]"
-    call Key >/dev/null; sleep 2.5
-
-    echo "== multiple monitors: staggered timed change"
-    set_key rotate-interval 1
-    set_key preview-request "'@test#6'"
-    local log="" uncovered=0 now
-    for _ in $(seq 22); do
-        sleep 1
-        now=$(savers_json)
-        [ "$now" != "${log##* }" ] && log="$log $now"
-        [ "$(shown_count)" -lt 2 ] && uncovered=$((uncovered + 1))
-    done
-    echo "     sequence:$log"
-    check "staggered: monitors changed one at a time" "python3 -c '
-import json, sys
-seq = [json.loads(x) for x in sys.argv[1].split()]
-steps = [(a, b) for a, b in zip(seq, seq[1:])]
-ok = any(a[0] != b[0] and a[1] == b[1] for a, b in steps) and any(a[1] != b[1] and a[0] == b[0] for a, b in steps)
-sys.exit(not ok)' '$log'"
-    echo "     samples with a monitor uncovered: $uncovered"
-    check "staggered: monitors stay covered" "[ $uncovered -le 1 ]"
-    call Key >/dev/null; sleep 2.5
-    set_key rotate-interval 0
-    set_key active-playlist "''"
-    set_key playlists "'[]'"
-    set_key monitor-mode "'same'"
-
-    echo "== re-trigger after dismissing on the lock screen"
-    set_key retrigger-delay 3
-    call Lock >/dev/null; sleep 4
-    call Key >/dev/null; sleep 1.5
-    check "dismissed" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
-    sleep 4
-    check "saver came back after 3 s idle" "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]"
-    check "still locked" "is_locked"
-    call Key >/dev/null; sleep 1.5
-    call Unlock >/dev/null; sleep 5
-    check "no re-trigger after unlock" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
-
-    echo "== history log"
-    local log="$T/data/$UUID/history.jsonl"
-    sleep 1
-    check "history file written" "[ -s '$log' ]"
-    check "records a key dismissal" "grep -q '\"ended\":\"key\"' '$log'"
-    check "records the saver name" "grep -q '\"name\":\"Flurry (Classic)\"' '$log'"
-    [ -s "$log" ] && tail -n 3 "$log" | sed 's/^/     /'
 
     echo "== overlay size changes live"
     # glmatrix: its green rain can't be mistaken for the white overlay text
     # (Flurry's white-hot core sometimes drifts into the measured corner).
-    call Preview 'xscreensaver:glmatrix' >/dev/null; sleep 4
+    call Preview 'xscreensaver:glmatrix' >/dev/null; wait_for 6 settled || true; sleep 1
     shot "$T/shots/size100.png"
     set_key overlay-scale 200; sleep 1.5
     shot "$T/shots/size200.png"
     set_key overlay-scale 50; sleep 1.5
     shot "$T/shots/size50.png"
-    call Stop >/dev/null; sleep 2
+    stop_saver
     set_key overlay-scale 100
     local w100 w200 w50
     w100=$(bright_extent "$T/shots/size100.png"); w200=$(bright_extent "$T/shots/size200.png"); w50=$(bright_extent "$T/shots/size50.png")
@@ -506,12 +484,12 @@ sys.exit(not ok)' '$log'"
     local connector tl br m1
     connector=$(call Connectors | grep -o '"[^"]*"' | sed -n 2p | tr -d '"')
     echo "     second monitor: $connector"
-    call Preview 'xscreensaver:glmatrix' >/dev/null; sleep 4
+    call Preview 'xscreensaver:glmatrix' >/dev/null; wait_for 6 settled || true; sleep 1
     set_key overlay-corner "'bottom-right'"; sleep 1.5
     shot "$T/shots/corner-br.png"
     set_key overlay-monitor "'$connector'"; sleep 1.5
     shot "$T/shots/monitor-1.png"
-    call Stop >/dev/null; sleep 2
+    stop_saver
     set_key overlay-corner "'top-left'"; set_key overlay-monitor "''"
     tl=$(white_in "$T/shots/corner-br.png" 0 0 700 400)
     br=$(white_in "$T/shots/corner-br.png" 1220 680 700 400)
@@ -519,9 +497,110 @@ sys.exit(not ok)' '$log'"
     echo "     white pixels: top-left=$tl bottom-right=$br second monitor bottom-right=$m1"
     check "bottom-right corner has the overlay" "[ $br -gt 100 ] && [ $tl -lt \$(( br / 10 )) ]"
     check "overlay moves to the chosen monitor" "[ -n '$connector' ] && [ $m1 -gt 100 ]"
+}
+
+scenario_rotation() {
+    echo "== rotation swaps savers without a gap"
+    set_key rotate-interval 1
+    set_key random true
+    set_key favorites "['flurry:fire', 'xscreensaver:abstractile']"
+    call Preview 'flurry:classic' >/dev/null; wait_for 6 settled || true
+    local first; first=$(saver_now)
+    check_within 14 "saver changed" "[ -n \"\$(saver_now)\" ] && [ \"\$(saver_now)\" != '$first' ]"
+    local gaps; gaps=$(watch_covered 2)
+    shot "$T/shots/rotated.png"
+    echo "     $first -> $(saver_now); samples uncovered during the change: $gaps"
+    check_within 4 "old saver processes gone" "[ -z \"\$(saver_pids '$FLURRY classic')\" ]"
+    check "rotation never uncovers a monitor" "[ $gaps -eq 0 ]"
+    stop_saver
+    set_key rotate-interval 0
+    set_key random false
+    set_key favorites "@as []"
+}
+
+scenario_monitors() {
+    echo "== multiple monitors: mirrored"
+    set_key monitor-mode "'mirror'"
+    call Preview 'xscreensaver:abstractile' >/dev/null; wait_for 6 settled || true
+    check "mirrored: one saver process" "[ \$(saver_pids /usr/lib/xscreensaver/ | wc -l) -eq 1 ]"
+    check "mirrored: both monitors covered" "[ \$(shown_count) -eq 2 ]"
+    # Retried until enough is drawn to compare (abstractile starts nearly black).
+    check_within 10 "mirrored: both monitors show the same picture" "shot '$T/shots/mirror.png' && mirror_match '$T/shots/mirror.png'"
+    stop_saver
+
+    echo "== multiple monitors: different on each"
+    set_key monitor-mode "'different'"
+    set_key playlists "'[{\"name\": \"Trio\", \"savers\": [\"flurry:fire\", \"xscreensaver:glmatrix\", \"xscreensaver:abstractile\"], \"shuffle\": true}]'"
+    set_key active-playlist "'Trio'"
+    set_key preview-request "'@test#5'"; wait_for 6 settled || true
+    local first second
+    first=$(savers_json)
+    echo "     savers: $first"
+    check "different: two processes" "[ \$(saver_pids /usr/lib/xscreensaver/ | wc -l) -eq 2 ]"
+    check "different: each monitor its own saver" "python3 -c 'import json,sys; a=json.loads(sys.argv[1]); sys.exit(not (len(a)==2 and a[0]!=a[1]))' '$first'"
+    call KeyVal 65363 >/dev/null; sleep 0.5
+    check_within 6 "different: still covered after skip" "settled && [ \$(shown_count) -ge 2 ]"
+    second=$(savers_json)
+    echo "     after skip: $second"
+    check "different: skip changes every monitor" "python3 -c 'import json,sys; a,b=json.loads(sys.argv[1]),json.loads(sys.argv[2]); sys.exit(not (a[0]!=b[0] and a[1]!=b[1] and b[0]!=b[1]))' '$first' '$second'"
+    call Key >/dev/null; wait_for 5 clean || true
+
+    echo "== multiple monitors: staggered timed change"
+    set_key rotate-interval 1
+    set_key preview-request "'@test#6'"; wait_for 6 settled || true
+    local log="" uncovered=0 now
+    local end; end=$(( $(now_ms) + 22000 ))
+    while [ "$(now_ms)" -lt "$end" ]; do
+        now=$(savers_json)
+        [ "$now" != "${log##* }" ] && log="$log $now"
+        [ "$(covered)" -lt 2 ] && uncovered=$((uncovered + 1))
+        sleep 0.2
+    done
+    echo "     sequence:$log"
+    check "staggered: monitors changed one at a time" "python3 -c '
+import json, sys
+seq = [json.loads(x) for x in sys.argv[1].split()]
+steps = [(a, b) for a, b in zip(seq, seq[1:])]
+ok = any(a[0] != b[0] and a[1] == b[1] for a, b in steps) and any(a[1] != b[1] and a[0] == b[0] for a, b in steps)
+sys.exit(not ok)' '$log'"
+    check "staggered: never the same saver on both monitors" "python3 -c '
+import json, sys
+sys.exit(any(len(set(json.loads(x))) < 2 for x in sys.argv[1].split()))' '$log'"
+    echo "     samples with a monitor uncovered: $uncovered"
+    check "staggered: monitors stay covered" "[ $uncovered -eq 0 ]"
+    call Key >/dev/null; wait_for 5 clean || true
+    set_key rotate-interval 0
+    set_key active-playlist "''"
+    set_key playlists "'[]'"
+    set_key monitor-mode "'same'"
+}
+
+scenario_retrigger() {
+    echo "== re-trigger after dismissing on the lock screen"
+    set_key retrigger-delay 3
+    call Lock >/dev/null
+    wait_for 8 "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]" || true
+    call Key >/dev/null
+    check_within 4 "dismissed" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
+    check_within 7 "saver came back after 3 s idle" "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]"
+    check "still locked" "is_locked"
+    call Key >/dev/null
+    wait_for 4 "[ -z \"\$(saver_pids '$FLURRY')\" ]" || true
+    call Unlock >/dev/null; sleep 5
+    check "no re-trigger after unlock" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
+}
+
+scenario_history() {
+    echo "== history log"
+    local log="$T/data/$UUID/history.jsonl"
+    call Preview 'flurry:classic' >/dev/null; wait_for 6 settled || true
+    call Key >/dev/null; wait_for 5 clean || true
+    check_within 3 "history file written" "[ -s '$log' ]"
+    check_within 3 "records a key dismissal" "grep -q '\"ended\":\"key\"' '$log'"
+    check "records the saver name" "grep -q '\"name\":\"Flurry (Classic)\"' '$log'"
+    [ -s "$log" ] && tail -n 3 "$log" | sed 's/^/     /'
 
     echo "== history limit trims to the newest runs"
-    local log="$T/data/$UUID/history.jsonl"
     python3 -c "
 import json
 with open('$log', 'w') as f:
@@ -529,31 +608,51 @@ with open('$log', 'w') as f:
         f.write(json.dumps({'id': 'seed', 'name': 'Seed %d' % i, 'start': i, 'end': i + 1, 'ended': 'key', 'lock': True}) + '\n')
 "
     set_key history-limit 100; sleep 1
-    call Preview 'flurry:fire' >/dev/null; sleep 3
-    call Stop >/dev/null; sleep 2
+    call Preview 'flurry:fire' >/dev/null; wait_for 6 settled || true
+    stop_saver
+    check_within 4 "trimmed to 100 runs" "[ \$(wc -l < '$log') -eq 100 ]"
     echo "     lines after trim: $(wc -l < "$log")"
-    check "trimmed to 100 runs" "[ \$(wc -l < '$log') -eq 100 ]"
     check "oldest runs dropped" "! grep -q '\"Seed 0\"' '$log'"
     check "newest run kept" "tail -n1 '$log' | grep -q 'flurry:fire'"
     set_key history-limit 2000
+}
 
+scenario_preview_button() {
     echo "== test lock screen"
+    local log="$T/data/$UUID/history.jsonl"
     set_key run-time 5
     set_key preview-request "'@test#1'"; sleep 3
     check "test saver running" "[ \$(saver_pids '$FLURRY' | wc -l) -eq 2 ]"
     sleep 3.5
     shot "$T/shots/test-notice.png"
     check "notice shown at run time (centre lit)" "centre_lit '$T/shots/test-notice.png'"
-    sleep 3.5
-    check "test stopped after the notice" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
+    check_within 4 "test stopped after the notice" "[ -z \"\$(saver_pids '$FLURRY')\" ]"
     check "never locked" "! is_locked"
-    check "history marks it as a test" "tail -n1 '$log' | grep -q '\"test\":true'"
+    check_within 3 "history marks it as a test" "tail -n1 '$log' | grep -q '\"test\":true'"
     set_key run-time -1
+}
+
+ALL_SCENARIOS="lock hacks options playlists overlay rotation monitors retrigger history preview_button"
+
+run() {
+    FAILED=0
+    local t0; t0=$(now_ms)
+    start
+    # Most scenarios count one saver process per monitor; the monitor modes
+    # get their own scenario.
+    set_key monitor-mode "'same'"
+
+    for name in ${SCENARIOS:-$ALL_SCENARIOS}; do
+        local ts; ts=$(now_ms)
+        "scenario_$name"
+        echo "     ($name: $(( ($(now_ms) - ts) / 1000 )) s)"
+    done
 
     if grep -q "JS ERROR" "$T/shell.log"; then
         echo "  FAIL JS errors in log:"; grep -A3 "JS ERROR" "$T/shell.log" | head -20; FAILED=1
     fi
     stop
+    echo "total: $(( ($(now_ms) - t0) / 1000 )) s${SCENARIOS:+ (only: $SCENARIOS)}"
     [ "$FAILED" = 0 ] && echo "ALL OK" || { echo "SOME CHECKS FAILED"; return 1; }
 }
 
@@ -562,7 +661,8 @@ case "${1:-}" in
     stop) stop ;;
     call) shift; call "$@" ;;
     shot) shot "$2" ;;
+    prefs) prefs ;;
     log) cat "$T/shell.log" ;;
     run) run ;;
-    *) sed -n '2,11p' "$0"; exit 1 ;;
+    *) sed -n '2,17p' "$0"; exit 1 ;;
 esac

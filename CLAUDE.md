@@ -8,18 +8,24 @@ behaviour, and update it when a change alters a flow, adds state, or adds a rule
 ## Commands
 - `make all` builds into `build/`; `make install` installs to ~/.local (the user must log out and back in
   for extension.js changes; prefs.js changes only need the settings window reopened).
-- `make test` runs the end-to-end suite in an isolated headless gnome-shell. It must print `ALL OK`.
+- `make test` runs the end-to-end suite in an isolated headless gnome-shell (about 2.5 min). It must
+  print `ALL OK`. While iterating, run only the relevant scenarios with
+  `SCENARIOS="monitors playlists" make test`, but **always run the full suite before committing**.
+- Tests wait on conditions (`check_within`, `wait_for`) rather than fixed sleeps. Fixed sleeps are
+  only for checks that something does *not* happen, or that time passes. A new behaviour gets a
+  scenario function in `tools/headless-test.sh`; a screen-coverage property is checked with
+  `watch_covered` / `covered` (debug `Covered`: monitors showing an opaque saver).
 - `npm run lint` (run `npm install` first if `@eslint/js` is missing). CI runs it too.
 - `make zip` builds the upload zip; it strips `debug.js`.
 
 ## Headless shell for manual checks / screenshots
 - Run `make all` first: the shell copies the extension from `build/`, not `extension/`.
-- `export SCREENSAVERS_TEST_DIR=<scratch dir>; tools/headless-test.sh start`, then export
-  `DBUS_SESSION_BUS_ADDRESS=$(cat $SCREENSAVERS_TEST_DIR/bus)`, `XDG_RUNTIME_DIR=/tmp/sstest-$UID`,
-  `WAYLAND_DISPLAY=wayland-sstest`, `XDG_CONFIG_HOME=$SCREENSAVERS_TEST_DIR/config` and
-  `XDG_DATA_HOME=$SCREENSAVERS_TEST_DIR/data`.
-- Then run `dbus-update-activation-environment` with those variables, and open the settings window
-  with `gnome-extensions prefs screensavers@yofuness.github.io`.
+- `export SCREENSAVERS_TEST_DIR=<scratch dir>`, then `tools/headless-test.sh prefs` starts the shell
+  (if needed) and opens the settings window. `tools/headless-test.sh start` starts the shell only.
+- For `dconf` on the test shell, export `DBUS_SESSION_BUS_ADDRESS=$(cat $SCREENSAVERS_TEST_DIR/bus)`
+  and `XDG_CONFIG_HOME=$SCREENSAVERS_TEST_DIR/config`.
+- Hot corners are off in the test shell: the virtual pointer starts in the top-left corner, and its
+  first move used to open the overview, which swallowed clicks.
 - Drive it with `tools/headless-test.sh call ClickAt X Y`, `call KeyVal N` and `shot file.png`
   (the screen is 3840x1080 with two monitors; the settings window's tabs are at y≈148). Set
   settings with `dconf write /org/gnome/shell/extensions/screensavers/...`.

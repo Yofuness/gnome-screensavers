@@ -387,21 +387,25 @@ export class Registry {
      * (consecutive items for consecutive monitors).  Otherwise the random /
      * favourites settings apply; random forces a shuffled pick (rotation,
      * skipping).  current is the saver on screen, so a new shuffle round
-     * doesn't start with it.  avoid: savers already on other monitors; picks
-     * in one call avoid each other too.  The selected saver is the same n times.
+     * doesn't start with it.  avoid: savers staying on other monitors;
+     * previous[i]: what pick i replaces.  Picks in one call avoid each other
+     * too.  The selected saver is the same n times.
      */
-    chooseMany(n, {random = false, current = null, avoid = []} = {}) {
-        const times = f => Array.from({length: n}, f);
+    chooseMany(n, {random = false, current = null, avoid = [], previous = []} = {}) {
         const taken = new Set(avoid);
-        const shuffledPick = pool => {
-            const id = this._nextShuffled(pool, current, taken);
+        const times = f => Array.from({length: n}, (_, i) => f(i));
+        const shuffledPick = (pool, i) => {
+            const skip = new Set(taken);
+            if (previous[i])
+                skip.add(previous[i]);
+            const id = this._nextShuffled(pool, current, skip);
             taken.add(id);
             return id;
         };
         const playlist = this._activePlaylist();
         if (playlist) {
             if (playlist.shuffle)
-                return times(() => shuffledPick(playlist.savers));
+                return times(i => shuffledPick(playlist.savers, i));
             if (this._playlistName !== playlist.name)
                 this._playlistPos = -1;
             this._playlistName = playlist.name;
@@ -414,7 +418,7 @@ export class Registry {
             const favs = this._settings.get_strv('favorites');
             const pool = favs.length ? favs : this.list().map(s => s.id);
             if (pool.length)
-                return times(() => shuffledPick(pool));
+                return times(i => shuffledPick(pool, i));
         }
         return times(() => this._settings.get_string('saver'));
     }

@@ -190,7 +190,10 @@ export default class ScreensaversExtension extends Extension {
         const mode = this._monitorMode();
         const count = mode === 'different' && !id ? monitors.length : 1;
         const current = this._runs?.at(-1)?.id ?? null;
-        const ids = id ? [id] : this._registry.chooseMany(count, {random: rotate, current});
+        // A rotation or skip gives each monitor something other than what it
+        // shows now.
+        const previous = rotate ? (this._runs ?? []).map(run => run.id) : [];
+        const ids = id ? [id] : this._registry.chooseMany(count, {random: rotate, current, previous});
         const picks = [];
         for (const saverId of ids) {
             const launch = this._registry.launcher(saverId);
@@ -360,8 +363,13 @@ export default class ScreensaversExtension extends Extension {
     // Swap the saver on one monitor; history moves on once the new one shows.
     _changeMonitor(i) {
         const session = this._session;
-        const others = this._runs.filter((_run, j) => j !== i).map(run => run.id);
-        const saverId = this._registry.choose({random: true, current: this._runs[i].id, avoid: others});
+        // Not what this monitor shows now, nor what the others keep showing.
+        const saverId = this._registry.choose({
+            random: true,
+            current: this._runs[i].id,
+            avoid: this._runs.filter((_run, j) => j !== i).map(run => run.id),
+            previous: [this._runs[i].id],
+        });
         const launch = this._registry.launcher(saverId);
         if (!session || !launch)
             return;

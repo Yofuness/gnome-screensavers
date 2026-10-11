@@ -35,6 +35,7 @@ const IFACE = `
     <method name="Status"><arg type="s" direction="out" name="json"/></method>
     <method name="List"><arg type="s" direction="out" name="json"/></method>
     <method name="Connectors"><arg type="s" direction="out" name="json"/></method>
+    <method name="Covered"><arg type="u" direction="out" name="monitors"/></method>
   </interface>
 </node>`;
 
@@ -154,10 +155,31 @@ export class DebugInterface {
             mode: Main.sessionMode.currentMode,
             session: this._sessionStatus(),
             saver: this._ext._runs?.[0]?.id ?? null,
+            outgoing: !!this._ext._outgoing,
             savers: this._ext._session?.ids ?? [],
             media: this._ext._session?.media.current()?.title ?? null,
             monitors: Main.layoutManager.monitors.map(m => [m.x, m.y, m.width, m.height]),
         });
+    }
+
+    // How many monitors are fully covered by a saver picture right now: an
+    // opaque clone (not mid-fade) in an opaque overlay, from the current or the
+    // outgoing session.  Fewer than all monitors means the lock screen or
+    // desktop shows through.
+    Covered() {
+        const opaque = actor => actor.opacity === 255 && !actor.get_transition('opacity');
+        const covered = new Set();
+        for (const session of [this._ext._session, this._ext._outgoing?.session]) {
+            if (!session?._overlay || !opaque(session._overlay))
+                continue;
+            for (const entry of session._entries) {
+                for (const view of entry.views) {
+                    if (opaque(view.box))
+                        covered.add(view.monitor.index);
+                }
+            }
+        }
+        return covered.size;
     }
 
     // Connector names of each monitor (by index), e.g. [["Meta-0"], ["Meta-1"]].
