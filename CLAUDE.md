@@ -1,7 +1,9 @@
 # CLAUDE.md
 
 GNOME Shell 51 extension (`screensavers@yofuness.github.io`) that shows XScreenSaver hacks over the
-lock screen. See README.md for features, architecture and the file table.
+lock screen. See README.md for features, and **[docs/architecture.md](docs/architecture.md) for how
+the modules fit together, the main flows, the state, and the design rules**. Read it before changing
+behaviour, and update it when a change alters a flow, adds state, or adds a rule.
 
 ## Commands
 - `make all` builds into `build/`; `make install` installs to ~/.local (the user must log out and back in
