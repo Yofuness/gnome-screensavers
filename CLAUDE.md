@@ -30,6 +30,11 @@ behaviour, and update it when a change alters a flow, adds state, or adds a rule
   (the screen is 3840x1080 with two monitors; the settings window's tabs are at y≈148). Set
   settings with `dconf write /org/gnome/shell/extensions/screensavers/...`.
 - The shell is zsh: unquoted `$var` doesn't word-split.
+- In tests, look at saver processes only through `saver_pids` / `saver_cmdlines` (scoped to the test
+  shell's session): an unscoped `pgrep -f` also matches other shells whose command line mentions the
+  path.
+- XScreenSaver hacks accept `-xrm '*resource: value'` for internal settings their config doesn't
+  expose; check a hack's source for the resource name before relying on it.
 - Stop the shell with `tools/headless-test.sh stop`. The test shell uses a fake `XDG_SESSION_ID`, so
   it never touches the real logind session.
 

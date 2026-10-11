@@ -221,6 +221,12 @@ saver_pids() {
     pgrep -f -s "$(cat "$T/pid")" -- "$1" || true
 }
 
+# Full command lines of matching processes in the test shell's session only
+# (an unscoped pgrep also matches other shells whose command line mentions it).
+saver_cmdlines() {
+    pgrep -af -s "$(cat "$T/pid")" -- "$1" || true
+}
+
 shown_count() {
     call Status | grep -o '"shown":true' | wc -l
 }
@@ -362,17 +368,27 @@ scenario_options() {
     echo "== per-hack options reach the command line"
     set_key saver-options "'{\"xscreensaver:glmatrix\": {\"density\": 10, \"fog\": false}}'"
     call Preview 'xscreensaver:glmatrix' >/dev/null
-    check_within 6 "glmatrix got --density 10 --no-fog" "pgrep -af /usr/lib/xscreensaver/glmatrix | grep -q -- '--density 10 --no-fog'"
+    check_within 6 "glmatrix got --density 10 --no-fog" "saver_cmdlines /usr/lib/xscreensaver/glmatrix | grep -q -- '--density 10 --no-fog'"
+    stop_saver
+    set_key saver-options "'{}'"
+
+    echo "== vermiculate's pattern length (an -xrm resource, not an option in its config)"
+    call Preview 'xscreensaver:vermiculate' >/dev/null
+    check_within 6 "vermiculate at defaults gets no -xrm" "[ -n \"\$(saver_pids /usr/lib/xscreensaver/vermiculate)\" ] && ! saver_cmdlines /usr/lib/xscreensaver/vermiculate | grep -q -- '-xrm'"
+    stop_saver
+    set_key saver-options "'{\"xscreensaver:vermiculate\": {\"ticks\": 80000}}'"
+    call Preview 'xscreensaver:vermiculate' >/dev/null
+    check_within 6 "vermiculate got -xrm *ticks:80000" "saver_cmdlines /usr/lib/xscreensaver/vermiculate | grep -q -- '-xrm \\*ticks:80000'"
     stop_saver
     set_key saver-options "'{}'"
 
     echo "== sonar defaults to simulation (no ping privileges needed)"
     call Preview 'xscreensaver:sonar' >/dev/null
-    check_within 6 "sonar started with --ping simulation" "pgrep -af /usr/lib/xscreensaver/sonar | grep -q -- '--ping simulation'"
+    check_within 6 "sonar started with --ping simulation" "saver_cmdlines /usr/lib/xscreensaver/sonar | grep -q -- '--ping simulation'"
     stop_saver
     set_key saver-options "'{\"xscreensaver:sonar\": {\"ping\": \"sn\"}}'"
     call Preview 'xscreensaver:sonar' >/dev/null
-    check_within 6 "user's choice overrides the default" "pgrep -af /usr/lib/xscreensaver/sonar | grep -qv -- '--ping'"
+    check_within 6 "user's choice overrides the default" "saver_cmdlines /usr/lib/xscreensaver/sonar | grep -qv -- '--ping'"
     stop_saver
     set_key saver-options "'{}'"
 }

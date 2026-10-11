@@ -19,6 +19,20 @@ const DEFAULT_VALUES = {
     'xscreensaver:sonar': {ping: 'sim'},
 };
 
+// Corrections to a hack's own option list, by hack name.  Vermiculate's
+// config calls its drawing speed "Duration" (higher draws faster, so patterns
+// end sooner), and doesn't offer how long a pattern lasts: the hack reads that
+// from its "ticks" resource, which -xrm sets.
+const OPTION_FIXES = {
+    vermiculate: options => options.flatMap(o => (o.id !== 'speed' ? [o] : [
+        {...o, label: 'Drawing speed', lowLabel: 'Slow', highLabel: 'Fast'},
+        {
+            type: 'number', id: 'ticks', label: 'Pattern length', lowLabel: 'Short', highLabel: 'Long',
+            low: 5000, high: 200000, default: 20000, arg: '-xrm *ticks:%', invert: false, spin: false,
+        },
+    ])),
+};
+
 Gio._promisify(Gio.File.prototype, 'load_contents_async');
 Gio._promisify(Gio.File.prototype, 'enumerate_children_async');
 Gio._promisify(Gio.File.prototype, 'query_info_async');
@@ -188,10 +202,12 @@ function parseHackConfig(xml) {
     // <option _label="Fire" arg-set="--preset fire"/> entries, if the hack has presets.
     const presets = [...xml.matchAll(/<option\b[^>]*_label="([^"]*)"[^>]*arg-set="--preset ([^"]+)"/g)]
         .map(m => ({label: m[1], name: m[2]}));
+    const name = attr('name');
+    const fix = OPTION_FIXES[name] ?? (options => options);
     return {
         presets,
-        options: parseOptions(xml),
-        name: attr('name'),
+        options: fix(parseOptions(xml)),
+        name,
         label: attr('_label') ?? attr('name'),
         description: desc.trim().replace(/\s+/g, ' ').split(/ (?:https?:|Written by)/)[0],
     };

@@ -30,6 +30,9 @@ Gio and GLib.
 - **`registry.js`, the catalogue and the choosing.**
   - Scans `/usr/share/xscreensaver/config/*.xml` asynchronously and parses each hack's options.
   - Merges in custom commands.
+  - Corrects hacks' option lists where XScreenSaver's config is wrong or incomplete
+    (`OPTION_FIXES`): e.g. Vermiculate's "Duration" is really drawing speed, and its pattern length
+    is an internal resource set with `-xrm *ticks:N`. `DEFAULT_VALUES` overrides defaults (sonar).
   - Turns a saver id into a launcher (argv).
   - Picks what plays (`choose` / `chooseMany`) and owns the shuffle queue and in-order playlist
     position.
