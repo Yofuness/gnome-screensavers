@@ -78,6 +78,18 @@ function choiceRow(settings, key, title, choices, also = []) {
     return row;
 }
 
+// The first widget of a type inside `widget` (for parts Adwaita has no API for).
+function findDescendant(widget, type) {
+    if (widget instanceof type)
+        return widget;
+    for (let c = widget.get_first_child(); c; c = c.get_next_sibling()) {
+        const found = findDescendant(c, type);
+        if (found)
+            return found;
+    }
+    return null;
+}
+
 // Grey out an overlay row when both the clock and now playing are off.
 function needsOverlay(settings, row) {
     const sync = () => {
@@ -135,17 +147,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
     // rotation) without locking.  PreferencesWindow has no API for header
     // buttons, so find its header bar and pack the button there.
     _addTestButton(window, settings) {
-        const find = widget => {
-            if (widget instanceof Adw.HeaderBar)
-                return widget;
-            for (let c = widget.get_first_child(); c; c = c.get_next_sibling()) {
-                const found = find(c);
-                if (found)
-                    return found;
-            }
-            return null;
-        };
-        const header = find(window);
+        const header = findDescendant(window, Adw.HeaderBar);
         if (!header)
             return;
         const button = new Gtk.Button({
@@ -853,6 +855,17 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const expanded = new Set();
         let rows = [];
         const rebuild = () => {
+            // Rebuilding the rows resets the page's scroll position; put it back
+            // once the new rows are laid out, so editing a long playlist doesn't
+            // jump to the top.
+            const scroll = findDescendant(page, Gtk.ScrolledWindow)?.vadjustment;
+            const position = scroll?.value ?? 0;
+            if (scroll) {
+                GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                    scroll.value = position;
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
             rows.forEach(r => listGroup.remove(r));
             rows = [];
             const playlists = readPlaylists(settings);
