@@ -682,6 +682,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             playlists.forEach((playlist, index) => {
                 const row = this._playlistRow(playlist, saverNames, {
                     inUse: playlist.name === settings.get_string('active-playlist'),
+                    previewSaver: id => preview(settings, id),
                     expanded: expanded.has(playlist.name),
                     onExpanded: open => (open ? expanded.add(playlist.name) : expanded.delete(playlist.name)),
                     update: changed => {
@@ -732,7 +733,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
     }
 
     // One playlist: shuffle switch, its screensavers in order, and actions.
-    _playlistRow(playlist, saverNames, {inUse, expanded, onExpanded, update, rename, remove, add}) {
+    _playlistRow(playlist, saverNames, {inUse, expanded, onExpanded, update, rename, remove, add, previewSaver}) {
         const count = playlist.savers.length;
         const row = new Adw.ExpanderRow({
             title: esc(playlist.name),
@@ -773,6 +774,8 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         playlist.savers.forEach((id, i) => {
             const saverRow = new Adw.ActionRow({title: esc(saverNames.get(id) ?? id)});
             const buttons = [
+                ['media-playback-start-symbolic', 'Preview (press a key or click to stop)', true,
+                    () => previewSaver(id)],
                 ['go-up-symbolic', 'Move up', i > 0, () => move(i, i - 1)],
                 ['go-down-symbolic', 'Move down', i < count - 1, () => move(i, i + 1)],
                 ['list-remove-symbolic', 'Remove from playlist', true,
