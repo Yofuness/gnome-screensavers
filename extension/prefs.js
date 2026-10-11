@@ -7,10 +7,15 @@ import Gtk from 'gi://Gtk';
 
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import {Registry, optionsKey, readPlaylists, readSaverOptions} from './registry.js';
+import {
+    Registry, mergePlaylistFile, optionsKey, playlistsToFile, readPlaylists, readSaverOptions,
+} from './registry.js';
 import {historyFile, parseHistory} from './history.js';
 
 Gio._promisify(Gio.File.prototype, 'load_contents_async');
+Gio._promisify(Gio.File.prototype, 'replace_contents_async');
+Gio._promisify(Gtk.FileDialog.prototype, 'open', 'open_finish');
+Gio._promisify(Gtk.FileDialog.prototype, 'save', 'save_finish');
 
 const esc = s => GLib.markup_escape_text(String(s), -1);
 
@@ -610,7 +615,21 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             child: new Adw.ButtonContent({icon_name: 'list-add-symbolic', label: 'New playlist'}),
             css_classes: ['flat'],
         });
-        listGroup.set_header_suffix(newButton);
+        const importButton = new Gtk.Button({
+            child: new Adw.ButtonContent({icon_name: 'document-open-symbolic', label: 'Import'}),
+            tooltip_text: 'Add playlists from an exported file',
+            css_classes: ['flat'],
+        });
+        const exportButton = new Gtk.Button({
+            child: new Adw.ButtonContent({icon_name: 'document-save-symbolic', label: 'Export'}),
+            tooltip_text: 'Save all playlists to a file',
+            css_classes: ['flat'],
+        });
+        const headerButtons = new Gtk.Box({spacing: 6});
+        [importButton, exportButton, newButton].forEach(b => headerButtons.append(b));
+        listGroup.set_header_suffix(headerButtons);
+        importButton.connect('clicked', () => this._importPlaylists(window, settings));
+        exportButton.connect('clicked', () => this._exportPlaylists(window, settings));
 
         const expanded = new Set();
         let rows = [];
@@ -642,7 +661,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                             settings.set_string('active-playlist', '');
                         save(all);
                     },
-                    add: () => this._pickSavers(window, registry, playlist.savers, picked => {
+                    add: () => this._pickSavers(window, settings, registry, playlist.savers, picked => {
                         const all = readPlaylists(settings);
                         all[index].savers = [...all[index].savers, ...picked];
                         save(all);
@@ -732,6 +751,52 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         return row;
     }
 
+    // Write every playlist to a JSON file the user picks.
+    async _exportPlaylists(window, settings) {
+        const playlists = readPlaylists(settings);
+        if (!playlists.length) {
+            window.add_toast(new Adw.Toast({title: 'There are no playlists to export'}));
+            return;
+        }
+        const dialog = new Gtk.FileDialog({title: 'Export playlists', initial_name: 'screensaver-playlists.json'});
+        let file;
+        try {
+            file = await dialog.save(window, null);
+        } catch {
+            return; // dismissed
+        }
+        try {
+            await file.replace_contents_async(new TextEncoder().encode(playlistsToFile(playlists)), null, false,
+                Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+            window.add_toast(new Adw.Toast({title: `Exported ${playlists.length} playlist${playlists.length === 1 ? '' : 's'}`}));
+        } catch (e) {
+            window.add_toast(new Adw.Toast({title: `Couldn't export: ${e.message}`}));
+        }
+    }
+
+    // Add the playlists from an exported file; clashing names get a number.
+    async _importPlaylists(window, settings) {
+        const filter = new Gtk.FileFilter({name: 'Playlist files'});
+        filter.add_suffix('json');
+        const filters = new Gio.ListStore({item_type: Gtk.FileFilter});
+        filters.append(filter);
+        const dialog = new Gtk.FileDialog({title: 'Import playlists', filters});
+        let file;
+        try {
+            file = await dialog.open(window, null);
+        } catch {
+            return; // dismissed
+        }
+        try {
+            const [bytes] = await file.load_contents_async(null);
+            const {playlists, added} = mergePlaylistFile(readPlaylists(settings), new TextDecoder().decode(bytes));
+            settings.set_string('playlists', JSON.stringify(playlists));
+            window.add_toast(new Adw.Toast({title: `Imported ${added} playlist${added === 1 ? '' : 's'}`}));
+        } catch (e) {
+            window.add_toast(new Adw.Toast({title: `Couldn't import: ${e.message}`}));
+        }
+    }
+
     // Ask for a playlist name; calls done(name) with a non-empty, trimmed name.
     _askName(window, heading, initial, done) {
         const dialog = new Adw.AlertDialog({heading});
@@ -750,7 +815,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
     }
 
     // A searchable checklist of screensavers not yet in the playlist.
-    _pickSavers(window, registry, existing, done) {
+    _pickSavers(window, settings, registry, existing, done) {
         const dialog = new Adw.Dialog({title: 'Add screensavers', content_width: 460, content_height: 560});
         const view = new Adw.ToolbarView();
         const header = new Adw.HeaderBar({show_end_title_buttons: false, show_start_title_buttons: false});
@@ -760,9 +825,16 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         header.pack_end(addButton);
         view.add_top_bar(header);
 
-        const search = new Gtk.SearchEntry({placeholder_text: 'Search screensavers', margin_start: 12,
-            margin_end: 12, margin_top: 6, margin_bottom: 6});
-        view.add_top_bar(search);
+        const search = new Gtk.SearchEntry({placeholder_text: 'Search screensavers', hexpand: true});
+        const favouritesOnly = new Gtk.ToggleButton({
+            child: new Adw.ButtonContent({icon_name: 'starred-symbolic', label: 'Favourites'}),
+            tooltip_text: 'Only show starred screensavers',
+        });
+        const filterBar = new Gtk.Box({spacing: 6, margin_start: 12, margin_end: 12, margin_top: 6, margin_bottom: 6});
+        filterBar.append(search);
+        filterBar.append(favouritesOnly);
+        view.add_top_bar(filterBar);
+        const favourites = new Set(settings.get_strv('favorites'));
         const list = new Gtk.ListBox({selection_mode: Gtk.SelectionMode.NONE, css_classes: ['boxed-list'],
             margin_start: 12, margin_end: 12, margin_bottom: 12});
         view.content = new Gtk.ScrolledWindow({child: list, vexpand: true});
@@ -787,9 +859,12 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         list.set_filter_func(row => {
             const q = search.text.trim().toLowerCase();
             const s = rowSavers.get(row);
+            if (favouritesOnly.active && !favourites.has(s.id))
+                return false;
             return !q || `${s.name} ${s.group}`.toLowerCase().includes(q);
         });
         search.connect('search-changed', () => list.invalidate_filter());
+        favouritesOnly.connect('toggled', () => list.invalidate_filter());
 
         cancel.connect('clicked', () => dialog.close());
         addButton.connect('clicked', () => {

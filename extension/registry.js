@@ -141,6 +141,36 @@ export function readPlaylists(settings) {
     }
 }
 
+const PLAYLIST_FILE_FORMAT = 'gnome-screensavers-playlists';
+
+/** The contents of an exported playlist file. */
+export function playlistsToFile(playlists) {
+    return `${JSON.stringify({format: PLAYLIST_FILE_FORMAT, version: 1, playlists}, null, 2)}\n`;
+}
+
+/**
+ * Add the playlists from an exported file to `existing`; clashing names get a
+ * number.  Returns {playlists, added}; throws if the text isn't a playlist file.
+ */
+export function mergePlaylistFile(existing, text) {
+    const data = JSON.parse(text);
+    if (data?.format !== PLAYLIST_FILE_FORMAT || !Array.isArray(data.playlists))
+        throw new Error('not a playlist file');
+    const imported = data.playlists
+        .filter(p => typeof p?.name === 'string' && p.name.trim() && Array.isArray(p.savers))
+        .map(p => ({name: p.name.trim(), savers: p.savers.filter(id => typeof id === 'string'), shuffle: !!p.shuffle}));
+    const playlists = [...existing];
+    const taken = new Set(playlists.map(p => p.name));
+    for (const playlist of imported) {
+        let name = playlist.name;
+        for (let n = 2; taken.has(name); n++)
+            name = `${playlist.name} (${n})`;
+        taken.add(name);
+        playlists.push({...playlist, name});
+    }
+    return {playlists, added: imported.length};
+}
+
 /** The key that option values are stored under for a saver id. */
 export function optionsKey(id) {
     return id.startsWith('flurry:') ? 'xscreensaver:flurry' : id;

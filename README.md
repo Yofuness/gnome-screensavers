@@ -19,7 +19,8 @@ XScreenSaver hack, or any program you add yourself, can run instead.
 - **Clock and now playing** in the top-left corner of the primary monitor, resizable from 50% to 200%.
   Media keys (play/pause/next/previous) control your player without stopping the screensaver.
 - **Playlists**: named lists of screensavers, shuffled or played in order. The active playlist
-  supplies every screensaver, including rotations and skips.
+  supplies every screensaver, including rotations and skips. Playlists can be exported to a file and
+  imported again (or shared).
 - **Rotation**: switch to the next screensaver every few minutes.
 - **Skip key** (Right arrow by default, configurable): jump to the next screensaver without
   dismissing it.
