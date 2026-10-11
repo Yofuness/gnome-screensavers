@@ -323,6 +323,10 @@ run() {
     played="$played $(call Status | grep -o '"saver":"[^"]*"')"
     call KeyVal 65363 >/dev/null; sleep 4
     played="$played $(call Status | grep -o '"saver":"[^"]*"')"
+    echo "     (mashing the skip key)"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do call KeyVal 65363 >/dev/null; sleep 0.15; done
+    sleep 5
+    check "mashing skip leaves one saver per monitor" "[ \$(shown_count) -eq 2 ] && [ \$(saver_pids /usr/lib/xscreensaver/ | wc -l) -eq 2 ]"
     call Key >/dev/null; sleep 2.5
     echo "     played:$played"
     local distinct

@@ -181,7 +181,14 @@ export default class ScreensaversExtension extends Extension {
     // anything else replaces it now, but keeps the fade GNOME just asked for.
     _handOver({onLock, rotate, skipped, test}) {
         if (rotate) {
-            this._stopOutgoing();
+            if (this._outgoing) {
+                // A handover is still running (the skip key was pressed again
+                // before the next saver finished fading in): replace only the
+                // one on its way in, and keep the one on screen until a saver
+                // has fully covered it.  It never showed, so it isn't logged.
+                this._session.stop();
+                return;
+            }
             this._outgoing = {session: this._session, run: this._run, reason: skipped ? 'skipped' : 'rotated'};
             return;
         }
