@@ -525,9 +525,14 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const sync = () => {
             syncing = true;
             const playlists = readPlaylists(settings).map(p => p.name);
-            values = ['selected', 'random', ...playlists.map(n => `playlist:${n}`)];
-            dropdown.model = Gtk.StringList.new(['Selected screensaver', 'Random (starred)',
-                ...playlists.map(n => `Playlist: ${n}`)]);
+            const next = ['selected', 'random', ...playlists.map(n => `playlist:${n}`)];
+            // Replace the model only when the playlists changed: swapping it
+            // while the dropdown is handling a click crashes GTK.
+            if (next.join('\n') !== values.join('\n')) {
+                values = next;
+                dropdown.model = Gtk.StringList.new(['Selected screensaver', 'Random (starred)',
+                    ...playlists.map(n => `Playlist: ${n}`)]);
+            }
             const value = current();
             dropdown.selected = Math.max(0, values.indexOf(value));
             row.subtitle = esc(explain(value));
@@ -541,8 +546,22 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             settings.set_string('active-playlist', playlist);
             settings.set_boolean('random', value === 'random');
         });
+        // Choosing an entry writes two keys; sync once afterwards, outside the
+        // dropdown's own signal handler.
+        let idleId = 0;
+        const queueSync = () => {
+            idleId ||= GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                idleId = 0;
+                sync();
+                return GLib.SOURCE_REMOVE;
+            });
+        };
         for (const key of ['playlists', 'active-playlist', 'random', 'saver', 'favorites'])
-            settings.connect(`changed::${key}`, sync);
+            settings.connect(`changed::${key}`, queueSync);
+        row.connect('destroy', () => {
+            if (idleId)
+                GLib.source_remove(idleId);
+        });
         sync();
         // Saver names arrive with the asynchronously loaded catalogue.
         registry.load().then(sync).catch(e => console.warn(`[screensavers] ${e.message}`));
