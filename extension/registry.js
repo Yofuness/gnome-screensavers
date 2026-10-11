@@ -131,11 +131,13 @@ export function readSaverOptions(settings) {
     }
 }
 
-/** Saved playlists ("playlists"): [{name, savers: [ids], shuffle}]. */
+/** Saved playlists ("playlists"): [{name, savers: [ids]}]. */
 export function readPlaylists(settings) {
     try {
         const list = JSON.parse(settings.get_string('playlists'));
-        return Array.isArray(list) ? list.filter(p => p?.name && Array.isArray(p.savers)) : [];
+        return Array.isArray(list)
+            ? list.filter(p => p?.name && Array.isArray(p.savers)).map(p => ({name: p.name, savers: p.savers}))
+            : [];
     } catch {
         return [];
     }
@@ -158,7 +160,7 @@ export function mergePlaylistFile(existing, text) {
         throw new Error('not a playlist file');
     const imported = data.playlists
         .filter(p => typeof p?.name === 'string' && p.name.trim() && Array.isArray(p.savers))
-        .map(p => ({name: p.name.trim(), savers: p.savers.filter(id => typeof id === 'string'), shuffle: !!p.shuffle}));
+        .map(p => ({name: p.name.trim(), savers: p.savers.filter(id => typeof id === 'string')}));
     const playlists = [...existing];
     const taken = new Set(playlists.map(p => p.name));
     for (const playlist of imported) {
@@ -384,9 +386,10 @@ export class Registry {
     /**
      * Pick n savers to run now (one per monitor when monitors differ).  An
      * active playlist wins: shuffled, or in order continuing where it left off
-     * (consecutive items for consecutive monitors).  Otherwise the random /
-     * favourites settings apply; random forces a shuffled pick (rotation,
-     * skipping).  current is the saver on screen, so a new shuffle round
+     * (consecutive items for consecutive monitors; "shuffle" decides).
+     * Otherwise "random" picks from "random-pool" (favourites, or all); the
+     * random argument forces that (rotation, skipping).  current is the saver
+     * on screen, so a new shuffle round
      * doesn't start with it.  avoid: savers staying on other monitors;
      * previous[i]: what pick i replaces.  Picks in one call avoid each other
      * too.  The selected saver is the same n times.
@@ -404,7 +407,7 @@ export class Registry {
         };
         const playlist = this._activePlaylist();
         if (playlist) {
-            if (playlist.shuffle)
+            if (this._settings.get_boolean('shuffle'))
                 return times(i => shuffledPick(playlist.savers, i));
             if (this._playlistName !== playlist.name)
                 this._playlistPos = -1;
@@ -415,8 +418,9 @@ export class Registry {
             });
         }
         if (random || this._settings.get_boolean('random')) {
+            const all = this.list().map(s => s.id);
             const favs = this._settings.get_strv('favorites');
-            const pool = favs.length ? favs : this.list().map(s => s.id);
+            const pool = this._settings.get_string('random-pool') === 'favourites' && favs.length ? favs : all;
             if (pool.length)
                 return times(i => shuffledPick(pool, i));
         }

@@ -181,9 +181,17 @@ sys.exit(0 if int((region.min(axis=2) > 200).sum()) > 200 else 1)
 
 # ── Checks and waiting ────────────────────────────────────────────────────
 
+# On a failure, show what was running: leftovers are the usual suspect.
+fail() {
+    echo "  FAIL $1"
+    FAILED=1
+    echo "     saver processes: $(pgrep -a -s "$(cat "$T/pid")" -f /usr/lib/xscreensaver/ | tr '\n' ';' || true)"
+    echo "     status: $(call Status 2>/dev/null || true)"
+}
+
 check() {
     local name=$1 cond=$2
-    if eval "$cond"; then echo "  ok   $name"; else echo "  FAIL $name"; FAILED=1; fi
+    if eval "$cond"; then echo "  ok   $name"; else fail "$name"; fi
 }
 
 now_ms() { local t=${EPOCHREALTIME/./}; echo $((t / 1000)); }
@@ -202,7 +210,7 @@ wait_for() {
 # condition holds, and fails only after SECONDS.
 check_within() {
     local timeout=$1 name=$2 cond=$3
-    if wait_for "$timeout" "$cond"; then echo "  ok   $name"; else echo "  FAIL $name"; FAILED=1; fi
+    if wait_for "$timeout" "$cond"; then echo "  ok   $name"; else fail "$name"; fi
 }
 
 is_locked() {
@@ -371,8 +379,9 @@ scenario_options() {
 
 scenario_playlists() {
     echo "== playlist in order + skip key"
-    set_key playlists "'[{\"name\": \"Pair\", \"savers\": [\"flurry:fire\", \"xscreensaver:abstractile\"], \"shuffle\": false}]'"
+    set_key playlists "'[{\"name\": \"Pair\", \"savers\": [\"flurry:fire\", \"xscreensaver:abstractile\"]}]'"
     set_key active-playlist "'Pair'"
+    set_key shuffle false
     set_key preview-request "'@test#2'"
     check_within 6 "playlist starts with its first saver" "call Status | grep -q '\"saver\":\"flurry:fire\"'"
     wait_for 6 settled || true
@@ -392,8 +401,9 @@ scenario_playlists() {
     check_within 3 "history records the skip" "grep -q '\"ended\":\"skipped\"' '$T/data/$UUID/history.jsonl'"
 
     echo "== shuffled playlist plays everything once before repeating"
-    set_key playlists "'[{\"name\": \"Trio\", \"savers\": [\"flurry:fire\", \"flurry:water\", \"xscreensaver:abstractile\"], \"shuffle\": true}]'"
+    set_key playlists "'[{\"name\": \"Trio\", \"savers\": [\"flurry:fire\", \"flurry:water\", \"xscreensaver:abstractile\"]}]'"
     set_key active-playlist "'Trio'"
+    set_key shuffle true
     local played=""
     set_key preview-request "'@test#4'"; wait_for 6 settled || true
     played="$played $(saver_now)"
@@ -430,6 +440,43 @@ scenario_playlists() {
     set_key skip-key "uint32 65363"
     set_key active-playlist "''"
     set_key playlists "'[]'"
+    set_key shuffle true
+}
+
+scenario_sources() {
+    echo "== source: Favourites plays only favourites"
+    set_key favorites "['flurry:fire']"
+    set_key random true
+    set_key random-pool "'favourites'"
+    local seen="" i
+    set_key preview-request "'@test#7'"; wait_for 6 settled || true
+    seen="$(saver_now)"
+    for i in 1 2; do
+        call KeyVal 65363 >/dev/null; sleep 0.5; wait_for 6 settled || true
+        seen="$seen $(saver_now)"
+    done
+    echo "     shown: $seen"
+    check "favourites: only the favourite plays" "[ \$(echo '$seen' | tr ' ' '\n' | grep -vc '\"saver\":\"flurry:fire\"') -eq 0 ]"
+    call Key >/dev/null; wait_for 5 clean || true
+
+    echo "== source: All screensavers plays beyond the favourites"
+    set_key random-pool "'all'"
+    set_key preview-request "'@test#8'"; wait_for 6 settled || true
+    seen="$(saver_now)"
+    for i in 1 2 3; do
+        call KeyVal 65363 >/dev/null; sleep 0.5; wait_for 6 settled || true
+        seen="$seen $(saver_now)"
+    done
+    echo "     shown: $seen"
+    check "all: plays screensavers that aren't favourites" "[ \$(echo '$seen' | tr ' ' '\n' | grep -vc '\"saver\":\"flurry:fire\"') -gt 0 ]"
+    check "all: never the same one twice in a row" "python3 -c '
+import sys
+seq = sys.argv[1].split()
+sys.exit(any(a == b for a, b in zip(seq, seq[1:])))' '$seen'"
+    call Key >/dev/null; wait_for 5 clean || true
+    set_key random false
+    set_key random-pool "'favourites'"
+    set_key favorites "@as []"
 }
 
 scenario_overlay() {
@@ -530,7 +577,7 @@ scenario_monitors() {
 
     echo "== multiple monitors: different on each"
     set_key monitor-mode "'different'"
-    set_key playlists "'[{\"name\": \"Trio\", \"savers\": [\"flurry:fire\", \"xscreensaver:glmatrix\", \"xscreensaver:abstractile\"], \"shuffle\": true}]'"
+    set_key playlists "'[{\"name\": \"Trio\", \"savers\": [\"flurry:fire\", \"xscreensaver:glmatrix\", \"xscreensaver:abstractile\"]}]'"
     set_key active-playlist "'Trio'"
     set_key preview-request "'@test#5'"; wait_for 6 settled || true
     local first second
@@ -632,7 +679,7 @@ scenario_preview_button() {
     set_key run-time -1
 }
 
-ALL_SCENARIOS="lock hacks options playlists overlay rotation monitors retrigger history preview_button"
+ALL_SCENARIOS="lock hacks options playlists sources overlay rotation monitors retrigger history preview_button"
 
 run() {
     FAILED=0

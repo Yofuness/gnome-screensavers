@@ -8,11 +8,23 @@
     </key>
     <key name="random" type="b">
       <default>false</default>
-      <summary>Pick a random saver from the favourites each time</summary>
+      <summary>Pick a random screensaver each time (from the pool in "random-pool")</summary>
+    </key>
+    <key name="random-pool" type="s">
+      <choices>
+        <choice value="favourites"/>
+        <choice value="all"/>
+      </choices>
+      <default>'favourites'</default>
+      <summary>Where random picks come from: the favourites (all if there are none) or every screensaver</summary>
+    </key>
+    <key name="shuffle" type="b">
+      <default>true</default>
+      <summary>Play the active playlist in a random order (false: top to bottom)</summary>
     </key>
     <key name="favorites" type="as">
       <default>[]</default>
-      <summary>Saver ids used for random rotation (empty = all)</summary>
+      <summary>Favourite screensaver ids (marked with a star)</summary>
     </key>
     <key name="custom-savers" type="as">
       <default>[]</default>
@@ -87,7 +99,7 @@
     <key name="playlists" type="s">
       <default>'[]'</default>
       <summary>Screensaver playlists</summary>
-      <description>JSON list of {"name", "savers": [saver ids], "shuffle": bool}.</description>
+      <description>JSON list of {"name", "savers": [saver ids]}. Whether a playlist shuffles is the "shuffle" key.</description>
     </key>
     <key name="active-playlist" type="s">
       <default>''</default>

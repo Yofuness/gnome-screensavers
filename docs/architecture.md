@@ -124,7 +124,9 @@ These keep it cohesive, so follow them in new code.
 5. **Settings live in one place.**
    - Every setting is a schema key, and is shown on the General page only.
    - Other pages manage *things*: playlists, the library, history, custom commands.
-   - One concept gets one control (e.g. Source covers `random` + `active-playlist`).
+   - One concept gets one control (e.g. Source covers `random`, `random-pool` and `active-playlist`).
+   - Choosing what plays (Source, Shuffle) is on General; playlists themselves only hold names and
+     screensavers.
 6. **Live where cheap.** Overlay size, corner and monitor apply to a running screensaver. Things that
    change what's running (source, monitor mode) apply from the next start.
 7. **Never block the shell.** File IO is async; savers are separate processes that get SIGTERM, then a
@@ -139,7 +141,7 @@ These keep it cohesive, so follow them in new code.
 | Area | Keys |
 | --- | --- |
 | Lock screen | `enabled-on-lock`, `run-time`, `retrigger-delay` |
-| Selection | `saver`, `random`, `favorites`, `active-playlist`, `playlists`, `rotate-interval`, `skip-key`, `monitor-mode` |
+| Selection | `saver`, `random`, `random-pool`, `favorites` (shown as Favourites), `active-playlist`, `shuffle`, `playlists`, `rotate-interval`, `skip-key`, `monitor-mode` |
 | Overlay | `show-clock`, `show-media`, `overlay-scale`, `overlay-corner`, `overlay-monitor` |
 | History | `log-history`, `history-limit` (file: `~/.local/share/<uuid>/history.jsonl`) |
 | Library and custom | `saver-options` (JSON), `custom-savers` |

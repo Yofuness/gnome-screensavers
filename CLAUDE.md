@@ -47,8 +47,11 @@ behaviour, and update it when a change alters a flow, adds state, or adds a rule
   (cover-scaled); "same" runs a copy per monitor; "different" gives each monitor its own pick
   (`registry.chooseMany`), with staggered timed changes via `SaverSession.swapSlot`. The test suite
   starts in "same" mode because most scenarios count one process per monitor.
-- General ▸ Source is a single control over the `random` and `active-playlist` keys
-  (`registry.choose()`: a playlist wins over random, random over the selected `saver`).
+- General ▸ Source is a single control over the `random`, `random-pool` and `active-playlist` keys
+  (`registry.choose()`: a playlist wins over random, random over the selected `saver`). Shuffle is the
+  global `shuffle` key, on General, not part of a playlist.
+- UI wording: starred screensavers are called **Favourites** (the key stays `favorites`; the star icon
+  stays).
 
 ## Releases
 - After each change, the user asks for a semver bump of `version-name` in `extension/metadata.json`,

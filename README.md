@@ -23,10 +23,11 @@ XScreenSaver hack, or any program you add yourself, can run instead.
 - **Clock and now playing** in any corner of any monitor (top left of the primary by default),
   resizable from 25% to 200%.
   Media keys (play/pause/next/previous) control your player without stopping the screensaver.
-- **Source** (General page): the screensaver selected in the Library, a random starred one, or a
-  playlist.
-- **Playlists**: named lists of screensavers, shuffled or played in order. Playlists can be exported to a file and
-  imported again (or shared).
+- **Source** (General page): the screensaver selected in the Library, a random one of your
+  **Favourites** (the ★ in the Library), a random one of **all** screensavers, or a playlist, with a
+  **Shuffle** switch for playlists (shuffled plays every screensaver once before any repeats).
+- **Playlists**: named lists of screensavers. Playlists can be exported to a file and imported
+  again (or shared).
 - **Change screensaver**: move on to the next one every few minutes.
 - **Skip key** (Right arrow by default, configurable): jump to the next screensaver without
   dismissing it.

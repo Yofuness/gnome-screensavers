@@ -88,6 +88,16 @@ function needsOverlay(settings, row) {
     sync();
 }
 
+// The current Source: 'selected', 'favourites', 'all' or 'playlist:<name>'.
+function sourceOf(settings) {
+    const active = settings.get_string('active-playlist');
+    if (active && readPlaylists(settings).some(p => p.name === active))
+        return `playlist:${active}`;
+    if (!settings.get_boolean('random'))
+        return 'selected';
+    return settings.get_string('random-pool') === 'all' ? 'all' : 'favourites';
+}
+
 const CORNERS = [
     ['top-left', 'Top left'],
     ['top-right', 'Top right'],
@@ -159,7 +169,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const group = new Adw.PreferencesGroup({
             title: 'Screensavers',
             description: 'The radio button selects the screensaver used when General ▸ Source is ' +
-                '“Selected screensaver”. ★ stars it, ⚙ opens its settings and ▶ previews it ' +
+                '“Selected screensaver”. ★ adds it to your Favourites, ⚙ opens its settings and ▶ previews it ' +
                 '(press a key or click to stop).',
         });
         page.add(group);
@@ -224,7 +234,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                     active: favourites().has(saver.id),
                 });
                 const syncStar = () => {
-                    star.tooltip_text = star.active ? 'Unstar' : 'Star';
+                    star.tooltip_text = star.active ? 'Remove from Favourites' : 'Add to Favourites';
                 };
                 syncStar();
                 star.connect('toggled', () => {
@@ -435,6 +445,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const selection = new Adw.PreferencesGroup({title: 'Screensaver selection'});
         page.add(selection);
         selection.add(this._sourceRow(settings, registry));
+        selection.add(this._shuffleRow(settings));
 
         selection.add(choiceRow(settings, 'rotate-interval', 'Change screensaver', [
             {value: 0, label: 'Never', explain: () => 'Shows one screensaver the whole time.'},
@@ -494,9 +505,10 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
     }
 
     // Where screensavers come from: the one selected in the Library, a random
-    // starred one, or a playlist.  One choice over the `random` and
-    // `active-playlist` keys, which registry.choose() reads (a playlist wins
-    // over random, random over the selection).
+    // favourite, a random one of all, or a playlist.  One choice over the
+    // `random`, `random-pool` and `active-playlist` keys, which
+    // registry.choose() reads (a playlist wins over random, random over the
+    // selection).
     _sourceRow(settings, registry) {
         const row = new Adw.ActionRow({title: 'Source', subtitle_lines: 0});
         const dropdown = new Gtk.DropDown({valign: Gtk.Align.CENTER});
@@ -505,20 +517,20 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
 
         let values = [];
         let syncing = false;
-        const current = () => {
-            const active = settings.get_string('active-playlist');
-            if (active && readPlaylists(settings).some(p => p.name === active))
-                return `playlist:${active}`;
-            return settings.get_boolean('random') ? 'random' : 'selected';
-        };
         const explain = value => {
-            if (value === 'random') {
+            const count = registry.list().length;
+            if (value === 'favourites') {
                 return settings.get_strv('favorites').length
-                    ? 'A random starred screensaver each time.'
-                    : 'A random screensaver each time. Star some in the Library to choose from those only.';
+                    ? 'A random favourite each time.'
+                    : 'You have no favourites yet, so any screensaver can play. Add some with ★ in the Library.';
             }
-            if (value.startsWith('playlist:'))
-                return 'Screensavers from this playlist; edit it on the Playlists page.';
+            if (value === 'all')
+                return `A random screensaver from all ${count} installed.`;
+            if (value.startsWith('playlist:')) {
+                const name = value.slice('playlist:'.length);
+                const n = readPlaylists(settings).find(p => p.name === name)?.savers.length ?? 0;
+                return `${n} screensaver${n === 1 ? '' : 's'}. Edit it on the Playlists page.`;
+            }
             const id = settings.get_string('saver');
             const name = registry.list().find(s => s.id === id)?.name ?? id;
             return `${name}. Choose another in the Library.`;
@@ -526,15 +538,15 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const sync = () => {
             syncing = true;
             const playlists = readPlaylists(settings).map(p => p.name);
-            const next = ['selected', 'random', ...playlists.map(n => `playlist:${n}`)];
+            const next = ['selected', 'favourites', 'all', ...playlists.map(n => `playlist:${n}`)];
             // Replace the model only when the playlists changed: swapping it
             // while the dropdown is handling a click crashes GTK.
             if (next.join('\n') !== values.join('\n')) {
                 values = next;
-                dropdown.model = Gtk.StringList.new(['Selected screensaver', 'Random (starred)',
+                dropdown.model = Gtk.StringList.new(['Selected screensaver', 'Favourites', 'All screensavers',
                     ...playlists.map(n => `Playlist: ${n}`)]);
             }
-            const value = current();
+            const value = sourceOf(settings);
             dropdown.selected = Math.max(0, values.indexOf(value));
             row.subtitle = esc(explain(value));
             syncing = false;
@@ -545,10 +557,12 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             const value = values[dropdown.selected] ?? 'selected';
             const playlist = value.startsWith('playlist:') ? value.slice('playlist:'.length) : '';
             settings.set_string('active-playlist', playlist);
-            settings.set_boolean('random', value === 'random');
+            if (value === 'favourites' || value === 'all')
+                settings.set_string('random-pool', value);
+            settings.set_boolean('random', value === 'favourites' || value === 'all');
         });
-        // Choosing an entry writes two keys; sync once afterwards, outside the
-        // dropdown's own signal handler.
+        // Choosing an entry writes several keys; sync once afterwards, outside
+        // the dropdown's own signal handler.
         let idleId = 0;
         const queueSync = () => {
             idleId ||= GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
@@ -557,7 +571,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 return GLib.SOURCE_REMOVE;
             });
         };
-        for (const key of ['playlists', 'active-playlist', 'random', 'saver', 'favorites'])
+        for (const key of ['playlists', 'active-playlist', 'random', 'random-pool', 'saver', 'favorites'])
             settings.connect(`changed::${key}`, queueSync);
         row.connect('destroy', () => {
             if (idleId)
@@ -566,6 +580,26 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         sync();
         // Saver names arrive with the asynchronously loaded catalogue.
         registry.load().then(sync).catch(e => console.warn(`[screensavers] ${e.message}`));
+        return row;
+    }
+
+    // Whether a playlist plays shuffled; only a playlist source has an order.
+    _shuffleRow(settings) {
+        const row = new Adw.SwitchRow({title: 'Shuffle', subtitle_lines: 0});
+        settings.bind('shuffle', row, 'active', Gio.SettingsBindFlags.DEFAULT);
+        const sync = () => {
+            const playlist = sourceOf(settings).startsWith('playlist:');
+            row.sensitive = playlist;
+            if (!playlist)
+                row.subtitle = 'Favourites and All screensavers always play in a random order.';
+            else if (settings.get_boolean('shuffle'))
+                row.subtitle = 'Plays the playlist in a random order, every screensaver once before any repeats.';
+            else
+                row.subtitle = 'Plays the playlist top to bottom, then starts over.';
+        };
+        for (const key of ['shuffle', 'playlists', 'active-playlist', 'random'])
+            settings.connect(`changed::${key}`, sync);
+        sync();
         return row;
     }
 
@@ -641,8 +675,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             if (dropdown.selected !== i)
                 dropdown.selected = i;
             let subtitle = modes[i][2];
-            const varies = settings.get_boolean('random') || settings.get_string('active-playlist');
-            if (modes[i][0] === 'different' && !varies)
+            if (modes[i][0] === 'different' && sourceOf(settings) === 'selected')
                 subtitle += ' With “Selected screensaver” as the source, every monitor shows that one.';
             row.subtitle = subtitle;
         };
@@ -867,7 +900,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
 
         newButton.connect('clicked', () => this._askName(window, 'New playlist', '', name => {
             expanded.add(name);
-            save([...readPlaylists(settings), {name, savers: [], shuffle: true}]);
+            save([...readPlaylists(settings), {name, savers: []}]);
         }));
 
         settings.connect('changed::playlists', rebuild);
@@ -877,12 +910,12 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         return page;
     }
 
-    // One playlist: shuffle switch, its screensavers in order, and actions.
+    // One playlist: its screensavers in order, and actions.
     _playlistRow(playlist, saverNames, {inUse, expanded, onExpanded, update, rename, remove, add, previewSaver}) {
         const count = playlist.savers.length;
         const row = new Adw.ExpanderRow({
             title: esc(playlist.name),
-            subtitle: `${count} screensaver${count === 1 ? '' : 's'} · ${playlist.shuffle ? 'shuffled' : 'in order'}`,
+            subtitle: `${count} screensaver${count === 1 ? '' : 's'}`,
             expanded,
         });
         row.connect('notify::expanded', () => onExpanded(row.expanded));
@@ -902,13 +935,6 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             row.add_suffix(button);
         }
 
-        const shuffle = new Adw.SwitchRow({
-            title: 'Shuffle',
-            subtitle: 'Off plays the screensavers top to bottom, then starts over',
-            active: playlist.shuffle,
-        });
-        shuffle.connect('notify::active', () => update({shuffle: shuffle.active}));
-        row.add_row(shuffle);
 
         const move = (from, to) => {
             const savers = [...playlist.savers];
@@ -1018,7 +1044,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         const search = new Gtk.SearchEntry({placeholder_text: 'Search screensavers', hexpand: true});
         const favouritesOnly = new Gtk.ToggleButton({
             child: new Adw.ButtonContent({icon_name: 'starred-symbolic', label: 'Favourites'}),
-            tooltip_text: 'Only show starred screensavers',
+            tooltip_text: 'Only show Favourites',
         });
         const filterBar = new Gtk.Box({spacing: 6, margin_start: 12, margin_end: 12, margin_top: 6, margin_bottom: 6});
         filterBar.append(search);
