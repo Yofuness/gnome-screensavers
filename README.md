@@ -22,7 +22,7 @@ XScreenSaver hack, or any program you add yourself, can run instead.
   colours and so on), generated from XScreenSaver's own config files. Screensavers with a Frame rate
   slider also get **Match display refresh rate**, which draws one frame per refresh of the monitor
   they're on.
-- **Anti-aliasing** for 3D (OpenGL) screensavers: on or off for all of them on General, and
+- **Anti-aliasing** for 3D (OpenGL) screensavers: on by default; switch it off for all of them on General, and
   overridable per screensaver in its ⚙ settings (some look better without it).
 - **Clock and now playing** in any corner of any monitor (top left of the primary by default),
   resizable from 25% to 200%.

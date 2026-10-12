@@ -300,7 +300,8 @@ expect_animating() {
 }
 
 FLURRY='/usr/lib/xscreensaver/flurry --preset'
-saver_now() { call Status | grep -o '"saver":"[^"]*"'; }
+# The saver shown now, or "none" (never fails: a failure here would end the run silently).
+saver_now() { call Status | grep -o '"saver":"[^"]*"' || echo none; }
 
 # savers_json: the saver id per slot, e.g. ["a","b"].
 savers_json() {
@@ -411,7 +412,7 @@ scenario_options() {
         wait_for 6 "[ -n \"\$(saver_pids $4)\" ]" || true
     }
     aa false xscreensaver:glmatrix "" $g
-    check_within 6 "off by default: no multiSample" "[ -n \"\$(saver_pids $g)\" ] && ! saver_cmdlines $g | grep -q multiSample"
+    check_within 6 "General off: no multiSample" "[ -n \"\$(saver_pids $g)\" ] && ! saver_cmdlines $g | grep -q multiSample"
     stop_saver
     aa true xscreensaver:glmatrix "" $g
     check_within 6 "General on: -xrm *multiSample: true" "saver_cmdlines $g | grep -q -- '-xrm \*multiSample: true'"
@@ -425,7 +426,7 @@ scenario_options() {
     aa true xscreensaver:abstractile "" /usr/lib/xscreensaver/abstractile
     check_within 6 "2D screensavers never get it" "[ -n \"\$(saver_pids /usr/lib/xscreensaver/abstractile)\" ] && ! saver_cmdlines /usr/lib/xscreensaver/abstractile | grep -q multiSample"
     stop_saver
-    set_key antialias false; set_key saver-options "'{}'"
+    set_key antialias true; set_key saver-options "'{}'"
 
     echo "== vermiculate: styles, custom worms and pattern length"
     local v=/usr/lib/xscreensaver/vermiculate
@@ -564,6 +565,7 @@ scenario_sources() {
         seen="$seen $(saver_now)"
     done
     echo "     shown: $seen"
+    check "all: a screensaver showed after every skip" "! echo '$seen' | grep -qw none"
     check "all: plays screensavers that aren't favourites" "[ \$(echo '$seen' | tr ' ' '\n' | grep -vc '\"saver\":\"flurry:fire\"') -gt 0 ]"
     check "all: never the same one twice in a row" "python3 -c '
 import sys
@@ -681,7 +683,7 @@ scenario_rotation() {
     set_key favorites "['flurry:fire', 'xscreensaver:abstractile']"
     call Preview 'flurry:classic' >/dev/null; wait_for 6 settled || true
     local first; first=$(saver_now)
-    check_within 14 "saver changed" "[ -n \"\$(saver_now)\" ] && [ \"\$(saver_now)\" != '$first' ]"
+    check_within 14 "saver changed" "[ \"\$(saver_now)\" != none ] && [ \"\$(saver_now)\" != '$first' ]"
     local gaps; gaps=$(watch_covered 2)
     shot "$T/shots/rotated.png"
     echo "     $first -> $(saver_now); samples uncovered during the change: $gaps"
