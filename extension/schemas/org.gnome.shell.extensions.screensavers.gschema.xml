@@ -96,6 +96,11 @@
       <default>'top-left'</default>
       <summary>Screen corner for the clock and now-playing overlay</summary>
     </key>
+    <key name="antialias" type="b">
+      <default>false</default>
+      <summary>Draw OpenGL screensavers with anti-aliasing (multisampling)</summary>
+      <description>Each screensaver's own Anti-aliasing option can override this.</description>
+    </key>
     <key name="overlay-monitor" type="s">
       <default>''</default>
       <summary>Monitor for the overlay, by connector name (e.g. "DP-1"); '' = primary</summary>

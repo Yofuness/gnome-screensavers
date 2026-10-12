@@ -40,6 +40,9 @@ Gio and GLib.
     (`withMatchDisplay`); when on, the slider is hidden and skipped, and the launcher adds
     `--delay 1e6/Hz` per monitor. The Hz comes from the shell (`refreshRate` in extension.js: the
     Clutter stage view covering that monitor), since prefs can't use Clutter.
+  - OpenGL hacks (`gl="yes"` in their XML) get an Anti-aliasing select first (`ANTIALIAS_OPTION`:
+    default / on / off); "default" follows the `antialias` key. On adds
+    `-xrm '*multiSample: true'` (`_antialiasArgs`).
   - Turns a saver id into a per-monitor launcher (`launch(monitor)` → argv, title, env).
   - Picks what plays (`choose` / `chooseMany`) and owns the shuffle queue and in-order playlist
     position.
@@ -157,6 +160,7 @@ These keep it cohesive, so follow them in new code.
 | Lock screen | `enabled-on-lock`, `run-time`, `retrigger-delay` |
 | Selection | `saver`, `random`, `random-pool`, `favorites` (shown as Favourites), `active-playlist`, `shuffle`, `playlists`, `rotate-interval`, `skip-key`, `monitor-mode` |
 | Overlay | `show-clock`, `show-media`, `overlay-scale`, `overlay-corner`, `overlay-monitor` |
+| Graphics | `antialias` (OpenGL hacks; per-hack override in `saver-options`) |
 | Images | `image-directory` (written to the private `.xscreensaver`) |
 | History | `log-history`, `history-limit` (file: `~/.local/share/<uuid>/history.jsonl`) |
 | Library and custom | `saver-options` (JSON), `custom-savers` |

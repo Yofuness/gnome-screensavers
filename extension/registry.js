@@ -99,6 +99,20 @@ export function parseOptions(xml) {
 const MATCH_DISPLAY = 'matchDisplay';
 
 /**
+ * OpenGL hacks (gl="yes") can draw with multisample anti-aliasing, which
+ * XScreenSaver leaves off (*multiSample: false).  Each one follows the
+ * "antialias" key unless its own option says otherwise.
+ */
+const ANTIALIAS_OPTION = {
+    type: 'select', id: 'antialias', label: 'Anti-aliasing', default: 'default',
+    choices: [
+        {id: 'default', label: 'As set on General', arg: ''},
+        {id: 'on', label: 'On', arg: ''},
+        {id: 'off', label: 'Off', arg: ''},
+    ],
+};
+
+/**
  * Most hacks have a "Frame rate" slider: --delay, the microseconds slept after
  * each frame.  Add a "Match display" switch in front of it; when on, the
  * slider is hidden and the launcher passes the delay for the monitor's
@@ -234,7 +248,7 @@ function parseHackConfig(xml) {
     const fix = HACK_FIXES[name]?.options ?? (options => options);
     return {
         presets,
-        options: fix(parseOptions(xml)),
+        options: attr('gl') === 'yes' ? [ANTIALIAS_OPTION, ...fix(parseOptions(xml))] : fix(parseOptions(xml)),
         name,
         label: attr('_label') ?? attr('name'),
         description: desc.trim().replace(/\s+/g, ' ').split(/ (?:https?:|Written by)/)[0],
@@ -417,7 +431,17 @@ export class Registry {
     _extraArgs(id) {
         const values = this.values(id);
         const fixArgs = HACK_FIXES[optionsKey(id).slice('xscreensaver:'.length)]?.args;
-        return [...optionArgs(this.options(id), values), ...fixArgs?.(values) ?? []];
+        return [...optionArgs(this.options(id), values), ...fixArgs?.(values) ?? [],
+            ...this._antialiasArgs(id, values)];
+    }
+
+    // -xrm '*multiSample: true' for an OpenGL hack with anti-aliasing on.
+    _antialiasArgs(id, values) {
+        if (!this.options(id).some(o => o.id === ANTIALIAS_OPTION.id))
+            return [];
+        const choice = values[ANTIALIAS_OPTION.id];
+        const on = choice === 'default' ? this._settings.get_boolean('antialias') : choice === 'on';
+        return on ? ['-xrm', '*multiSample: true'] : [];
     }
 
     // Per-monitor arguments: the frame delay when "Match display" is on.

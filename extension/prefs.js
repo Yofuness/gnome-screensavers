@@ -499,6 +499,16 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         overlay.add(this._cornerRow(settings));
         overlay.add(this._monitorRow(settings));
 
+        const graphics = new Adw.PreferencesGroup({title: 'Graphics'});
+        page.add(graphics);
+        const antialias = new Adw.SwitchRow({
+            title: 'Anti-aliasing',
+            subtitle: 'Smooths jagged edges in 3D screensavers. Override it for one screensaver ' +
+                'with ⚙ in the Library.',
+        });
+        settings.bind('antialias', antialias, 'active', Gio.SettingsBindFlags.DEFAULT);
+        graphics.add(antialias);
+
         const images = new Adw.PreferencesGroup({
             title: 'Images',
             description: 'For screensavers that show pictures, such as Jigsaw, Distort, GLSlideshow and ' +

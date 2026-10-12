@@ -403,6 +403,30 @@ scenario_options() {
     stop_saver
     set_key saver-options "'{}'"
 
+    echo "== anti-aliasing: General default, per-screensaver override, OpenGL only"
+    local g=/usr/lib/xscreensaver/glmatrix aa
+    aa() {
+        set_key antialias "$1"; set_key saver-options "'{\"$2\": {$3}}'"
+        call Preview "$2" >/dev/null
+        wait_for 6 "[ -n \"\$(saver_pids $4)\" ]" || true
+    }
+    aa false xscreensaver:glmatrix "" $g
+    check_within 6 "off by default: no multiSample" "[ -n \"\$(saver_pids $g)\" ] && ! saver_cmdlines $g | grep -q multiSample"
+    stop_saver
+    aa true xscreensaver:glmatrix "" $g
+    check_within 6 "General on: -xrm *multiSample: true" "saver_cmdlines $g | grep -q -- '-xrm \*multiSample: true'"
+    stop_saver
+    aa true xscreensaver:glmatrix "\"antialias\": \"off\"" $g
+    check_within 6 "per-screensaver Off beats General on" "[ -n \"\$(saver_pids $g)\" ] && ! saver_cmdlines $g | grep -q multiSample"
+    stop_saver
+    aa false xscreensaver:glmatrix "\"antialias\": \"on\"" $g
+    check_within 6 "per-screensaver On beats General off" "saver_cmdlines $g | grep -q -- '-xrm \*multiSample: true'"
+    stop_saver
+    aa true xscreensaver:abstractile "" /usr/lib/xscreensaver/abstractile
+    check_within 6 "2D screensavers never get it" "[ -n \"\$(saver_pids /usr/lib/xscreensaver/abstractile)\" ] && ! saver_cmdlines /usr/lib/xscreensaver/abstractile | grep -q multiSample"
+    stop_saver
+    set_key antialias false; set_key saver-options "'{}'"
+
     echo "== vermiculate: styles, custom worms and pattern length"
     local v=/usr/lib/xscreensaver/vermiculate
     vermi() {
