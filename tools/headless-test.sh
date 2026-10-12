@@ -386,6 +386,21 @@ scenario_options() {
     call Preview 'xscreensaver:glmatrix' >/dev/null
     check_within 6 "glmatrix got --density 10 --no-fog" "saver_cmdlines /usr/lib/xscreensaver/glmatrix | grep -q -- '--density 10 --no-fog'"
     stop_saver
+
+    echo "== frame rate: the slider, or match the display's refresh rate"
+    local j=/usr/lib/xscreensaver/jigsaw d
+    set_key saver-options "'{\"xscreensaver:jigsaw\": {\"delay\": 30000}}'"
+    call Preview 'xscreensaver:jigsaw' >/dev/null
+    check_within 6 "the frame rate slider passes its (inverted) delay" "saver_cmdlines $j | grep -q -- '--delay 70000'"
+    stop_saver
+    set_key saver-options "'{\"xscreensaver:jigsaw\": {\"delay\": 30000, \"matchDisplay\": true}}'"
+    call Preview 'xscreensaver:jigsaw' >/dev/null
+    check_within 6 "match display: every monitor's copy gets one delay, not the slider's" "[ \$(saver_cmdlines $j | grep -c -- '--delay') -eq 2 ] && ! saver_cmdlines $j | grep -q -- '--delay 70000'"
+    for d in $(saver_cmdlines $j | grep -o -- '--delay [0-9]*' | cut -d' ' -f2); do
+        echo "     delay: $d µs ($(( 1000000 / d )) Hz)"
+        check "delay matches a 30–250 Hz display" "[ $d -ge 4000 ] && [ $d -le 34000 ]"
+    done
+    stop_saver
     set_key saver-options "'{}'"
 
     echo "== vermiculate: styles, custom worms and pattern length"

@@ -19,7 +19,9 @@ XScreenSaver hack, or any program you add yourself, can run instead.
   - *Different on each*: each monitor gets its own pick from the source, like XScreenSaver's
     `random` mode. Skip changes all of them; timed changes go one monitor at a time.
 - **Per-screensaver settings**: the ⚙ button next to a screensaver in the Library opens its options (speed, density,
-  colours and so on), generated from XScreenSaver's own config files.
+  colours and so on), generated from XScreenSaver's own config files. Screensavers with a Frame rate
+  slider also get **Match display refresh rate**, which draws one frame per refresh of the monitor
+  they're on.
 - **Clock and now playing** in any corner of any monitor (top left of the primary by default),
   resizable from 25% to 200%.
   Media keys (play/pause/next/previous) control your player without stopping the screensaver.

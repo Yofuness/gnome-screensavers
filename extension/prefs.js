@@ -369,7 +369,8 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
                 });
                 add(o, row);
             } else if (o.type === 'boolean') {
-                const row = new Adw.SwitchRow({title: esc(o.label), active: !!current});
+                const row = new Adw.SwitchRow({title: esc(o.label), subtitle: esc(o.subtitle ?? ''),
+                    active: !!current});
                 row.connect('notify::active', () => set(o.id, row.active));
                 widgets.push(() => {
                     row.active = defaults[o.id];

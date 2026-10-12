@@ -8,6 +8,7 @@
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Mtk from 'gi://Mtk';
 
 import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -17,6 +18,23 @@ import {SaverSession, killStragglers} from './saverSession.js';
 import {Registry} from './registry.js';
 import {HistoryWriter} from './history.js';
 import {ImageConfig} from './imageConfig.js';
+
+// Refresh rate (Hz) of the stage view showing a monitor's centre; 0 if unknown
+// (the registry then assumes 60).
+function refreshRate(monitor) {
+    try {
+        const x = monitor.x + monitor.width / 2, y = monitor.y + monitor.height / 2;
+        for (const view of global.stage.peek_stage_views()) {
+            const r = new Mtk.Rectangle();
+            view.get_layout(r);
+            if (x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+                return view.get_refresh_rate();
+        }
+    } catch (e) {
+        console.warn(`[screensavers] can't read the refresh rate: ${e.message}`);
+    }
+    return 0;
+}
 
 const NOTICE_SECONDS = 3;
 // With a different saver on each monitor, timed changes go one monitor at a
@@ -29,7 +47,7 @@ export default class ScreensaversExtension extends Extension {
         this._sessionSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.session'});
         this._images = new ImageConfig(this.uuid);
         this._images.write(this._settings.get_string('image-directory'));
-        this._registry = new Registry(this._settings, {env: this._images.env});
+        this._registry = new Registry(this._settings, {env: this._images.env, refreshRate});
         this._registryReady = this._registry.load().catch(e =>
             console.warn(`[screensavers] scanning screensavers: ${e.message}`));
         this._history = new HistoryWriter(this.uuid);

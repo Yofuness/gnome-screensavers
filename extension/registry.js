@@ -93,7 +93,44 @@ export function parseOptions(xml) {
         if (option)
             options.push(option);
     }
-    return options;
+    return withMatchDisplay(options);
+}
+
+const MATCH_DISPLAY = 'matchDisplay';
+
+/**
+ * Most hacks have a "Frame rate" slider: --delay, the microseconds slept after
+ * each frame.  Add a "Match display" switch in front of it; when on, the
+ * slider is hidden and the launcher passes the delay for the monitor's
+ * refresh rate instead (Registry.launcher).
+ */
+function withMatchDisplay(options) {
+    const i = options.findIndex(isFrameDelay);
+    if (i < 0)
+        return options;
+    const delay = options[i];
+    return [
+        ...options.slice(0, i),
+        {type: 'boolean', id: MATCH_DISPLAY, label: 'Match display refresh rate', default: false,
+            set: '', unset: '', subtitle: 'Draws one frame per screen refresh instead of using the slider.'},
+        {...delay, when: values => !values[MATCH_DISPLAY] && (delay.when?.(values) ?? true)},
+        ...options.slice(i + 1),
+    ];
+}
+
+function isFrameDelay(o) {
+    return o.type === 'number' && o.label === 'Frame rate' && o.arg.trim() === '--delay %';
+}
+
+/** --delay (microseconds per frame) for a refresh rate in Hz, within the slider's range. */
+export function frameDelay(option, hz) {
+    const us = Math.round(1e6 / (hz > 0 ? hz : 60));
+    return Math.min(option.high, Math.max(option.low, us));
+}
+
+// An option with a non-default value whose row applies (`when`).
+function isSet(o, values) {
+    return o.id in values && values[o.id] !== o.default && (o.when?.(values) ?? true);
 }
 
 /** Command-line arguments for the values that differ from each hack's own default. */
@@ -101,7 +138,7 @@ export function optionArgs(options, values) {
     const fill = (template, value) => template.trim().split(/\s+/).map(t => t.replace('%', value));
     const args = [];
     for (const o of options) {
-        if (!(o.id in values) || values[o.id] === o.default)
+        if (!isSet(o, values))
             continue;
         const v = values[o.id];
         if ((o.type === 'number' || o.type === 'string') && !o.arg)
@@ -257,10 +294,12 @@ export class Registry {
     /**
      * env: extra environment for XScreenSaver hacks (the shell passes the
      * private HOME from imageConfig.js); custom commands run unchanged.
+     * refreshRate: monitor => Hz, for the "Match display refresh rate" option.
      */
-    constructor(settings, {env = null} = {}) {
+    constructor(settings, {env = null, refreshRate = () => 60} = {}) {
         this._settings = settings;
         this._env = env;
+        this._refreshRate = refreshRate;
         this._hacks = null;
         this._shuffle = {key: null, queue: []};
     }
@@ -381,6 +420,14 @@ export class Registry {
         return [...optionArgs(this.options(id), values), ...fixArgs?.(values) ?? []];
     }
 
+    // Per-monitor arguments: the frame delay when "Match display" is on.
+    _monitorArgs(id, monitor) {
+        const delay = this.options(id).find(isFrameDelay);
+        if (!delay || !this.values(id)[MATCH_DISPLAY])
+            return [];
+        return ['--delay', String(frameDelay(delay, this._refreshRate(monitor)))];
+    }
+
     // The active playlist, limited to savers that are installed; null if none.
     _activePlaylist() {
         const name = this._settings.get_string('active-playlist');
@@ -454,7 +501,7 @@ export class Registry {
                 return null;
             const preset = flurry.presets.some(p => p.name === arg) ? arg : 'classic';
             const argv = [flurry.exe, '--preset', preset, ...this._extraArgs(id)];
-            return () => ({argv, title: flurry.label, env: this._env});
+            return monitor => ({argv: [...argv, ...this._monitorArgs(id, monitor)], title: flurry.label, env: this._env});
         }
         if (kind === 'xscreensaver') {
             const hack = this._hack(arg);
@@ -462,7 +509,7 @@ export class Registry {
                 return null;
             // With no -root / -window-id a hack opens its own top-level X window.
             const argv = [hack.exe, ...this._extraArgs(id)];
-            return () => ({argv, title: hack.label, env: this._env});
+            return monitor => ({argv: [...argv, ...this._monitorArgs(id, monitor)], title: hack.label, env: this._env});
         }
         if (kind === 'custom') {
             const c = this._customs().find(x => x.id === id);

@@ -36,7 +36,11 @@ Gio and GLib.
     span several options. Vermiculate uses it for Style (built-in patterns, Custom, or your own
     instring), a working Drawing speed, and Pattern length (`-xrm *ticks:N`). `DEFAULT_VALUES`
     overrides defaults (sonar).
-  - Turns a saver id into a launcher (argv).
+  - Every "Frame rate" slider (`--delay %`) gets a `matchDisplay` switch in front of it
+    (`withMatchDisplay`); when on, the slider is hidden and skipped, and the launcher adds
+    `--delay 1e6/Hz` per monitor. The Hz comes from the shell (`refreshRate` in extension.js: the
+    Clutter stage view covering that monitor), since prefs can't use Clutter.
+  - Turns a saver id into a per-monitor launcher (`launch(monitor)` → argv, title, env).
   - Picks what plays (`choose` / `chooseMany`) and owns the shuffle queue and in-order playlist
     position.
   - Also holds the pure helpers prefs uses: playlist import/export and option parsing.
