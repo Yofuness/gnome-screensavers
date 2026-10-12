@@ -44,6 +44,10 @@ Gio and GLib.
   - `InfoOverlay` draws the clock and now playing in a chosen corner and monitor, with burn-in drift
     and scaling.
   - `MediaWatcher` tracks MPRIS players over D-Bus, for display and for the media keys.
+- **`imageConfig.js`, shell only.** Writes the private `.xscreensaver` (picture folder, no desktop
+  grabs) under `~/.local/share/<uuid>/xscreensaver-home/`. `xscreensaver-getimage` only reads
+  `~/.xscreensaver`, so XScreenSaver hacks (not custom commands) are started with `HOME` pointing
+  there and the real XDG folders passed through (`Registry` `env`, `SaverSession._spawn`).
 - **`history.js`.** `HistoryWriter` appends JSON lines asynchronously and trims to the limit;
   `parseHistory` reads them for the History page.
 - **`prefs.js`, the settings window.** Pages: General, Playlists, Library, History, Custom. It writes
@@ -149,6 +153,7 @@ These keep it cohesive, so follow them in new code.
 | Lock screen | `enabled-on-lock`, `run-time`, `retrigger-delay` |
 | Selection | `saver`, `random`, `random-pool`, `favorites` (shown as Favourites), `active-playlist`, `shuffle`, `playlists`, `rotate-interval`, `skip-key`, `monitor-mode` |
 | Overlay | `show-clock`, `show-media`, `overlay-scale`, `overlay-corner`, `overlay-monitor` |
+| Images | `image-directory` (written to the private `.xscreensaver`) |
 | History | `log-history`, `history-limit` (file: `~/.local/share/<uuid>/history.jsonl`) |
 | Library and custom | `saver-options` (JSON), `custom-savers` |
 | Internal | `preview-request` |

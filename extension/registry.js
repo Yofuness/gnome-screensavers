@@ -254,8 +254,13 @@ function shuffled(list) {
 }
 
 export class Registry {
-    constructor(settings) {
+    /**
+     * env: extra environment for XScreenSaver hacks (the shell passes the
+     * private HOME from imageConfig.js); custom commands run unchanged.
+     */
+    constructor(settings, {env = null} = {}) {
         this._settings = settings;
+        this._env = env;
         this._hacks = null;
         this._shuffle = {key: null, queue: []};
     }
@@ -449,7 +454,7 @@ export class Registry {
                 return null;
             const preset = flurry.presets.some(p => p.name === arg) ? arg : 'classic';
             const argv = [flurry.exe, '--preset', preset, ...this._extraArgs(id)];
-            return () => ({argv, title: flurry.label});
+            return () => ({argv, title: flurry.label, env: this._env});
         }
         if (kind === 'xscreensaver') {
             const hack = this._hack(arg);
@@ -457,7 +462,7 @@ export class Registry {
                 return null;
             // With no -root / -window-id a hack opens its own top-level X window.
             const argv = [hack.exe, ...this._extraArgs(id)];
-            return () => ({argv, title: hack.label});
+            return () => ({argv, title: hack.label, env: this._env});
         }
         if (kind === 'custom') {
             const c = this._customs().find(x => x.id === id);

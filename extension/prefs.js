@@ -16,6 +16,7 @@ Gio._promisify(Gio.File.prototype, 'load_contents_async');
 Gio._promisify(Gio.File.prototype, 'replace_contents_async');
 Gio._promisify(Gtk.FileDialog.prototype, 'open', 'open_finish');
 Gio._promisify(Gtk.FileDialog.prototype, 'save', 'save_finish');
+Gio._promisify(Gtk.FileDialog.prototype, 'select_folder', 'select_folder_finish');
 
 const esc = s => GLib.markup_escape_text(String(s), -1);
 
@@ -497,6 +498,15 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         overlay.add(this._cornerRow(settings));
         overlay.add(this._monitorRow(settings));
 
+        const images = new Adw.PreferencesGroup({
+            title: 'Images',
+            description: 'For screensavers that show pictures, such as Jigsaw, Distort, GLSlideshow and ' +
+                'Photo Pile. Pictures from this folder can appear on your lock screen, so choose one ' +
+                'you are happy for others to see.',
+        });
+        page.add(images);
+        images.add(this._imageFolderRow(settings, window));
+
         const history = new Adw.PreferencesGroup({
             title: 'History',
             description: 'A record of which screensaver ran when, stored only on this computer. ' +
@@ -786,6 +796,49 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         monitors.connect('items-changed', sync);
         sync();
         needsOverlay(settings, row);
+        return row;
+    }
+
+    // The picture folder: a button showing the folder, which opens a folder
+    // chooser, and a button to go back to the built-in image.
+    _imageFolderRow(settings, window) {
+        const row = new Adw.ActionRow({title: 'Picture folder', subtitle_lines: 0});
+        const choose = new Gtk.Button({valign: Gtk.Align.CENTER});
+        const clear = new Gtk.Button({
+            icon_name: 'edit-clear-symbolic',
+            valign: Gtk.Align.CENTER,
+            tooltip_text: 'Use the built-in image',
+            css_classes: ['flat'],
+        });
+        const sync = () => {
+            const folder = settings.get_string('image-directory');
+            choose.label = folder ? GLib.path_get_basename(folder) : 'Choose…';
+            choose.tooltip_text = folder || 'Choose a folder';
+            row.subtitle = folder
+                ? `${folder} (and its subfolders); a random picture each time`
+                : 'None: these screensavers show their built-in test image';
+            clear.sensitive = !!folder;
+        };
+        settings.connect('changed::image-directory', sync);
+        sync();
+        clear.connect('clicked', () => settings.set_string('image-directory', ''));
+        choose.connect('clicked', async () => {
+            const current = settings.get_string('image-directory');
+            const dialog = new Gtk.FileDialog({title: 'Choose a picture folder'});
+            if (current)
+                dialog.initial_folder = Gio.File.new_for_path(current);
+            try {
+                const folder = await dialog.select_folder(window, null);
+                if (folder?.get_path())
+                    settings.set_string('image-directory', folder.get_path());
+            } catch (e) {
+                if (!e.matches(Gtk.DialogError, Gtk.DialogError.DISMISSED))
+                    window.add_toast(new Adw.Toast({title: `Couldn't open the folder: ${e.message}`}));
+            }
+        });
+        row.add_suffix(choose);
+        row.add_suffix(clear);
+        row.activatable_widget = choose;
         return row;
     }
 

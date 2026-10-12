@@ -174,6 +174,19 @@ sys.exit(0 if lit > 20 and diff < lit / 10 else 1)
 ' "$@"
 }
 
+# test_hue_share FILE: share of spring-green pixels (hue 135-165 degrees, any
+# shading) on monitor 0, in thousandths.  XScreenSaver's built-in test image
+# (colour bars and an orange logo) has none of that hue.
+test_hue_share() {
+    pixels '
+img = load(sys.argv[1])[0][:, :1920, :3]
+r, g, b = img[..., 0], img[..., 1], img[..., 2]
+ok = (g > 80) & (g > b) & (b > r) & (g - r > 60)
+hue = 120 + 60 * (b - r) / np.maximum(g - r, 1)
+print(int((ok & (hue > 135) & (hue < 165)).mean() * 1000))
+' "$@"
+}
+
 # centre_lit FILE: something light sits in the middle of monitor 0.
 centre_lit() {
     pixels '
@@ -523,6 +536,38 @@ sys.exit(any(a == b for a, b in zip(seq, seq[1:])))' '$seen'"
     set_key favorites "@as []"
 }
 
+scenario_images() {
+    echo "== picture folder for image screensavers (jigsaw)"
+    local pics="$T/pictures" home="$T/data/$UUID/xscreensaver-home" pid share
+    mkdir -p "$pics/sub"
+    python3 -I -c "
+import gi
+gi.require_version('GdkPixbuf', '2.0')
+from gi.repository import GdkPixbuf
+pb = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, 800, 600)
+pb.fill(0x00ff80ff)
+pb.savev('$pics/sub/spring-green.png', 'png', [], [])"
+    set_key monitor-mode "'mirror'"; set_key show-clock false; set_key show-media false
+    set_key image-directory "'$pics'"
+    check_within 3 "private .xscreensaver points at the folder" "grep -q 'imageDirectory:.*$pics' '$home/.xscreensaver' && grep -q 'chooseRandomImages:.True' '$home/.xscreensaver'"
+    check "desktop grabs are off" "grep -q 'grabDesktopImages:.False' '$home/.xscreensaver'"
+    call Preview 'xscreensaver:jigsaw' >/dev/null
+    wait_for 6 "[ -n \"\$(saver_pids /usr/lib/xscreensaver/jigsaw)\" ]" || true
+    pid=$(saver_pids /usr/lib/xscreensaver/jigsaw | head -1)
+    check "jigsaw runs with the private HOME" "tr '\\0' '\\n' < /proc/$pid/environ | grep -qx 'HOME=$home'"
+    check_within 15 "jigsaw shows a picture from the folder" "shot '$T/shots/jigsaw-picture.png' && [ \$(test_hue_share '$T/shots/jigsaw-picture.png') -gt 100 ]"
+    echo "     test colour share: $(test_hue_share "$T/shots/jigsaw-picture.png")/1000"
+    stop_saver
+    set_key image-directory "''"
+    check_within 3 "clearing the folder turns pictures off" "grep -q 'chooseRandomImages:.False' '$home/.xscreensaver'"
+    call Preview 'xscreensaver:jigsaw' >/dev/null; wait_for 6 settled || true; sleep 8
+    shot "$T/shots/jigsaw-builtin.png"; share=$(test_hue_share "$T/shots/jigsaw-builtin.png")
+    echo "     test colour share without a folder: $share/1000"
+    check "without a folder it shows its built-in image" "[ $share -lt 60 ]"
+    stop_saver
+    set_key monitor-mode "'same'"; set_key show-clock true; set_key show-media true
+}
+
 scenario_overlay() {
     echo "== clock overlay on the primary monitor"
     # glmatrix and white pixels only: Flurry's white-hot core can drift into
@@ -723,7 +768,7 @@ scenario_preview_button() {
     set_key run-time -1
 }
 
-ALL_SCENARIOS="lock hacks options playlists sources overlay rotation monitors retrigger history preview_button"
+ALL_SCENARIOS="lock hacks options playlists sources images overlay rotation monitors retrigger history preview_button"
 
 run() {
     FAILED=0

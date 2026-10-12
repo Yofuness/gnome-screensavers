@@ -48,7 +48,7 @@ For this project that means:
 | External scripts and binaries are discouraged; none may be bundled. Spawn processes carefully and make sure they exit. | Only the user's installed XScreenSaver hacks and their own custom commands run, through `Gio.Subprocess`. They get SIGTERM, then a force kill after 1.5 s (`_terminate`), and `killStragglers()` in `disable()`. |
 | Privileged subprocesses: avoid them; if one is unavoidable, use `pkexec` on a file the user can't write. | None. (Sonar's ping privileges are left to the user; sonar defaults to simulation mode.) |
 | Installing from pip / npm / … only through explicit user action. | Nothing is installed. `node_modules` is for linting only and is not in the zip. |
-| File IO (project rule, from review feedback): async only in the shell. | `history.js` and `registry.js` use the `*_async` Gio calls. |
+| File IO (project rule, from review feedback): async only in the shell. | `history.js`, `imageConfig.js` and `registry.js` use the `*_async` Gio calls. The extension writes only inside its own data folder (`~/.local/share/<uuid>/`); it never edits the user's `~/.xscreensaver`. |
 
 ## Session modes
 

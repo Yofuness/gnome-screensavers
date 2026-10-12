@@ -16,6 +16,7 @@ import {ScreenShield} from 'resource:///org/gnome/shell/ui/screenShield.js';
 import {SaverSession, killStragglers} from './saverSession.js';
 import {Registry} from './registry.js';
 import {HistoryWriter} from './history.js';
+import {ImageConfig} from './imageConfig.js';
 
 const NOTICE_SECONDS = 3;
 // With a different saver on each monitor, timed changes go one monitor at a
@@ -26,7 +27,9 @@ export default class ScreensaversExtension extends Extension {
     enable() {
         this._settings = this.getSettings();
         this._sessionSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.session'});
-        this._registry = new Registry(this._settings);
+        this._images = new ImageConfig(this.uuid);
+        this._images.write(this._settings.get_string('image-directory'));
+        this._registry = new Registry(this._settings, {env: this._images.env});
         this._registryReady = this._registry.load().catch(e =>
             console.warn(`[screensavers] scanning screensavers: ${e.message}`));
         this._history = new HistoryWriter(this.uuid);
@@ -57,6 +60,7 @@ export default class ScreensaversExtension extends Extension {
         this._settings.connectObject(
             'changed::preview-request', () => this._onPreviewRequest(),
             'changed::history-limit', () => this._history.recount(),
+            'changed::image-directory', () => this._images.write(this._settings.get_string('image-directory')),
             'changed::overlay-scale', () => this._session?.setInfoScale(this._overlayScale()),
             'changed::overlay-corner', () => this._session?.setInfoLayout(this._overlayLayout()),
             'changed::overlay-monitor', () => this._session?.setInfoLayout(this._overlayLayout()),
@@ -92,6 +96,7 @@ export default class ScreensaversExtension extends Extension {
         this._shield = null;
         this._pendingStart = null;
         this._history = null;
+        this._images = null;
         this._registry = null;
         this._settings = null;
         this._sessionSettings = null;

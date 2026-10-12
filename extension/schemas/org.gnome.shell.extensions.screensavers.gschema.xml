@@ -26,6 +26,11 @@
       <default>[]</default>
       <summary>Favourite screensaver ids (marked with a star)</summary>
     </key>
+    <key name="image-directory" type="s">
+      <default>''</default>
+      <summary>Folder of pictures for screensavers that show images ('' = their built-in image)</summary>
+      <description>Searched recursively by xscreensaver-getimage (Jigsaw, Distort, GLSlideshow, ...). Desktop grabs are always off.</description>
+    </key>
     <key name="custom-savers" type="as">
       <default>[]</default>
       <summary>Custom saver commands, each "Name|command line"</summary>

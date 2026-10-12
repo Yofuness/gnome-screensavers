@@ -34,6 +34,9 @@ XScreenSaver hack, or any program you add yourself, can run instead.
 - **Resume after dismissal**: comes back after you dismiss it, once the lock screen has been left alone for a set time.
 - **History**: a local log of which screensaver ran when, browsable in the settings window. Keeps the
   newest 2000 runs by default (configurable up to 1,000,000); can be turned off.
+- **Images**: choose a picture folder for the screensavers that show pictures (Jigsaw, Distort,
+  GLSlideshow, Photo Pile…). The extension keeps its own private copy of XScreenSaver's image settings,
+  so your `~/.xscreensaver` is never touched, and desktop snapshots are always off.
 - **Preview button** (top left of the settings window): run the whole lock-screen experience (random
   pick, overlay, run time, rotation) without locking.
 
@@ -68,6 +71,7 @@ inhibitor while the saver runs, and when the run time is over it lets the origin
 | `extension/saverSession.js` | Spawns savers, finds their windows, clones them on screen, handles input. |
 | `extension/infoOverlay.js` | Clock/date and now-playing overlay; MPRIS for the media keys. |
 | `extension/history.js` | The optional run log (`~/.local/share/screensavers@yofuness.github.io/history.jsonl`). |
+| `extension/imageConfig.js` | Private `.xscreensaver` for the picture folder; hacks get it through their `HOME`. |
 | `extension/hackFixes.js` | Per-hack corrections to XScreenSaver's option lists (e.g. Vermiculate's styles and custom worms). |
 | `extension/registry.js` | Saver catalogue and per-hack options, read from `/usr/share/xscreensaver/config`, plus custom commands. |
 | `extension/prefs.js` | Settings window. |

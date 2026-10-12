@@ -175,10 +175,13 @@ export class SaverSession {
     // fade in over the entry they replace and call onShown once they cover it.
     _spawn(slot, index, {pending = false, onShown = null} = {}) {
         const {monitor, id, launch, mirror} = slot;
-        const {argv, title} = launch(monitor);
+        const {argv, title, env} = launch(monitor);
         let proc;
         try {
-            proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
+            const launcher = new Gio.SubprocessLauncher({flags: Gio.SubprocessFlags.NONE});
+            for (const [name, value] of Object.entries(env ?? {}))
+                launcher.setenv(name, value, true);
+            proc = launcher.spawnv(argv);
         } catch (e) {
             console.warn(`[screensavers] failed to start ${argv[0]}: ${e.message}`);
             return null;
