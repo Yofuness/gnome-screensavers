@@ -40,6 +40,8 @@ const NOTICE_SECONDS = 3;
 // With a different saver on each monitor, timed changes go one monitor at a
 // time, this far apart (as XScreenSaver staggers its cycling).
 const STAGGER_SECONDS = 3;
+// Screensavers that won't start in a row before giving up (see _retryFailed).
+const MAX_FAILED_STARTS = 3;
 
 export default class ScreensaversExtension extends Extension {
     enable() {
@@ -55,6 +57,8 @@ export default class ScreensaversExtension extends Extension {
         this._runs = null;
         this._staggerIds = [];
         this._outgoing = null;
+        this._fixedId = false;
+        this._failedStarts = 0;
         this._pendingFade = null;
         this._pendingStart = null;
 
@@ -177,6 +181,8 @@ export default class ScreensaversExtension extends Extension {
             return false;
 
         this._handOver({onLock, rotate, skipped, test});
+        if (!rotate)
+            this._fixedId = !!id;
 
         const session = this._createSession(slots, rotate);
         this._session = session;
@@ -298,12 +304,14 @@ export default class ScreensaversExtension extends Extension {
                     this._dismiss(reason);
             },
             onFailed: () => {
-                if (this._session === session)
+                if (this._session === session && !this._retryFailed())
                     this._stopSession({resumeFade: true, reason: 'failed'});
             },
             onShown: () => {
-                if (this._session === session)
+                if (this._session === session) {
+                    this._failedStarts = 0;
                     this._stopOutgoing();
+                }
             },
             onSkip: () => {
                 if (this._session === session)
@@ -312,6 +320,23 @@ export default class ScreensaversExtension extends Extension {
             skipKeyval: this._settings.get_uint('skip-key'),
         });
         return session;
+    }
+
+    // A picked screensaver that won't start (WebCollage, for one, only draws on
+    // the desktop background) shouldn't end the screensaver: when the source
+    // picks, try another.  During a skip or rotation the one on screen stays
+    // until the replacement shows.  Returns false to give up.
+    _retryFailed() {
+        if (this._fixedId || this._failedStarts >= MAX_FAILED_STARTS) {
+            this._failedStarts = 0;
+            return false;
+        }
+        this._failedStarts++;
+        console.warn(`[screensavers] ${this._runs?.map(run => run.id).join(', ')} didn't start; trying another`);
+        if (this._outgoing)
+            return this.startSaver({rotate: true, skipped: this._outgoing.reason === 'skipped'});
+        this._runs = null;          // it never showed, so it isn't logged
+        return this.startSaver({onLock: this._onLock, test: this._test});
     }
 
     _startRunTimer() {

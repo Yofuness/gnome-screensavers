@@ -248,6 +248,7 @@ function parseHackConfig(xml) {
     const fix = HACK_FIXES[name]?.options ?? (options => options);
     return {
         presets,
+        gl: attr('gl') === 'yes',
         options: attr('gl') === 'yes' ? [ANTIALIAS_OPTION, ...fix(parseOptions(xml))] : fix(parseOptions(xml)),
         name,
         label: attr('_label') ?? attr('name'),
@@ -445,10 +446,17 @@ export class Registry {
     }
 
     // Per-monitor arguments: the frame delay when "Match display" is on.
+    // --delay is a pause after each frame, on top of the drawing time, so a
+    // pause of one refresh lands well below the refresh rate (Jigsaw: ~47 fps
+    // at 60 Hz).  OpenGL hacks wait for vsync when they show a frame, so with
+    // no pause they run at exactly the refresh rate.  2D hacks have no vsync
+    // and would use a whole CPU core without a pause; they get one refresh.
     _monitorArgs(id, monitor) {
         const delay = this.options(id).find(isFrameDelay);
         if (!delay || !this.values(id)[MATCH_DISPLAY])
             return [];
+        if (this._hack(optionsKey(id).slice('xscreensaver:'.length))?.gl)
+            return ['--delay', String(Math.max(0, delay.low))];
         return ['--delay', String(frameDelay(delay, this._refreshRate(monitor)))];
     }
 

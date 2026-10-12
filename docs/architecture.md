@@ -37,8 +37,9 @@ Gio and GLib.
     instring), a working Drawing speed, and Pattern length (`-xrm *ticks:N`). `DEFAULT_VALUES`
     overrides defaults (sonar).
   - Every "Frame rate" slider (`--delay %`) gets a `matchDisplay` switch in front of it
-    (`withMatchDisplay`); when on, the slider is hidden and skipped, and the launcher adds
-    `--delay 1e6/Hz` per monitor. The Hz comes from the shell (`refreshRate` in extension.js: the
+    (`withMatchDisplay`); when on, the slider is hidden and skipped. OpenGL hacks get
+    `--delay 0` (vsync paces them to exactly the refresh rate; a pause would add to the drawing
+    time); 2D hacks, which have no vsync, get `--delay 1e6/Hz` per monitor. The Hz comes from the shell (`refreshRate` in extension.js: the
     Clutter stage view covering that monitor), since prefs can't use Clutter.
   - OpenGL hacks (`gl="yes"` in their XML) get an Anti-aliasing select first (`ANTIALIAS_OPTION`:
     default / on / off); "default" follows the `antialias` key. On adds
@@ -101,6 +102,12 @@ re-trigger.
 2. When the new one's first window appears, its overlay fades in, and only once the fade has finished
    is the outgoing session stopped and logged.
 
+**A screensaver that won't start** (every process exits, or no window within the timeout: e.g.
+WebCollage, which only draws on the desktop background): `onFailed` → `_retryFailed`. When the source
+picks (`_fixedId` false), it starts another pick, up to `MAX_FAILED_STARTS` in a row; during a
+handover the outgoing session stays on screen meanwhile. A preview of one specific saver, or the
+last failed attempt, ends the run as before (`_stopSession({resumeFade: true})`).
+
 **Timed change in different mode: per-monitor and staggered.** `_staggeredChange` swaps monitor 0
 now, monitor 1 three seconds later, and so on, through `SaverSession.swapSlot`. That fades the new
 saver in over the old one on that monitor only.
@@ -118,6 +125,7 @@ saver in over the old one on that monitor only.
 | `_outgoing` | `{session, runs, reason}` during a handover; stopped once the new session covers it |
 | `_runs` | history records for `_session`: one, or one per monitor in different mode (`_perMonitor`) |
 | `_onLock` / `_test` | what kind of run this is (lock screen, Preview button, or plain preview) |
+| `_fixedId` / `_failedStarts` | whether this run shows one specific saver (no retries), and failed starts in a row |
 | `_pendingFade` | GNOME's fade we took over; resumed when the run time ends |
 | `_rotateId`, `_staggerIds`, `_runTimerId`, `_noticeTimerId` | timers; all removed in `_stopSession` |
 

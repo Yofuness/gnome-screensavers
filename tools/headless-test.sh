@@ -396,10 +396,15 @@ scenario_options() {
     stop_saver
     set_key saver-options "'{\"xscreensaver:jigsaw\": {\"delay\": 30000, \"matchDisplay\": true}}'"
     call Preview 'xscreensaver:jigsaw' >/dev/null
-    check_within 6 "match display: every monitor's copy gets one delay, not the slider's" "[ \$(saver_cmdlines $j | grep -c -- '--delay') -eq 2 ] && ! saver_cmdlines $j | grep -q -- '--delay 70000'"
-    for d in $(saver_cmdlines $j | grep -o -- '--delay [0-9]*' | cut -d' ' -f2); do
+    check_within 6 "match display, OpenGL: no pause on either copy (vsync paces it)" "[ \$(saver_cmdlines $j | grep -c -- '--delay 0\$') -eq 2 ]"
+    stop_saver
+    local c=/usr/lib/xscreensaver/cwaves
+    set_key saver-options "'{\"xscreensaver:cwaves\": {\"matchDisplay\": true}}'"
+    call Preview 'xscreensaver:cwaves' >/dev/null
+    check_within 6 "match display, 2D: every monitor's copy gets a pause" "[ \$(saver_cmdlines $c | grep -c -- '--delay') -eq 2 ]"
+    for d in $(saver_cmdlines $c | grep -o -- '--delay [0-9]*' | cut -d' ' -f2); do
         echo "     delay: $d µs ($(( 1000000 / d )) Hz)"
-        check "delay matches a 30–250 Hz display" "[ $d -ge 4000 ] && [ $d -le 34000 ]"
+        check "2D pause matches a 30–250 Hz display" "[ $d -ge 4000 ] && [ $d -le 34000 ]"
     done
     stop_saver
     set_key saver-options "'{}'"
@@ -472,6 +477,30 @@ scenario_options() {
     check_within 6 "user's choice overrides the default" "saver_cmdlines /usr/lib/xscreensaver/sonar | grep -qv -- '--ping'"
     stop_saver
     set_key saver-options "'{}'"
+}
+
+scenario_failures() {
+    echo "== a screensaver that won't start (webcollage) is replaced, not the end"
+    set_key playlists "'[{\"name\": \"Broken first\", \"savers\": [\"xscreensaver:webcollage\", \"xscreensaver:abstractile\"]}, {\"name\": \"Broken middle\", \"savers\": [\"xscreensaver:abstractile\", \"xscreensaver:webcollage\", \"flurry:fire\"]}]'"
+    set_key shuffle false
+    set_key active-playlist "'Broken first'"
+    set_key preview-request "'@test#20'"
+    check_within 10 "start: the next saver plays instead" "call Status | grep -q '\"saver\":\"xscreensaver:abstractile\"' && settled"
+    call Key >/dev/null; wait_for 5 clean || true
+
+    set_key active-playlist "'Broken middle'"
+    set_key preview-request "'@test#21'"
+    check_within 6 "skip test starts on abstractile" "call Status | grep -q '\"saver\":\"xscreensaver:abstractile\"' && settled"
+    call KeyVal 65363 >/dev/null
+    local gaps; gaps=$(watch_covered 3)
+    check_within 8 "skip: passes over it to the next saver" "call Status | grep -q '\"saver\":\"flurry:fire\"' && settled"
+    echo "     samples with a monitor uncovered during the skip: $gaps"
+    check "skip: the old saver stays until the next one shows" "[ $gaps -eq 0 ]"
+    call Key >/dev/null; wait_for 5 clean || true
+    set_key active-playlist "''"; set_key playlists "'[]'"; set_key shuffle true
+
+    set_key preview-request "'xscreensaver:webcollage#22'"
+    check_within 10 "previewing it on its own just ends" "clean"
 }
 
 scenario_playlists() {
@@ -809,7 +838,7 @@ scenario_preview_button() {
     set_key run-time -1
 }
 
-ALL_SCENARIOS="lock hacks options playlists sources images overlay rotation monitors retrigger history preview_button"
+ALL_SCENARIOS="lock hacks options playlists failures sources images overlay rotation monitors retrigger history preview_button"
 
 run() {
     FAILED=0
