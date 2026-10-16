@@ -39,6 +39,12 @@ behaviour, and update it when a change alters a flow, adds state, or adds a rule
   it never touches the real logind session.
 
 ## GNOME 51 gotchas
+- Every large X window that closes or unmaps leaks its GPU buffers inside gnome-shell (~20–35 MB each;
+  a mutter/Xwayland bug). Hacks therefore draw into long-lived windows from `windowPool.js` via
+  `-window-id`; never go back to a window per hack. Measure on the real session with
+  gnome-shell's `/proc/<pid>/fdinfo/<render fd>` `drm-total-system0`. The headless shell can't
+  show the leak (its Xwayland uses shm buffers).
+- Override-redirect windows don't work for this: mutter doesn't pick up OpenGL frames drawn into them.
 - `Clutter.keyval_from_name` doesn't exist. The skip key is stored as a keyval (`u`).
 - `Gio.File.make_directory_with_parents_async` doesn't exist. Use `make_directory_async`.
 - Use async Gio file IO only (extensions.gnome.org review requirement).

@@ -63,6 +63,11 @@ live **clone** of that window on top of the lock screen. The saver never receive
 screen keeps it, so it can't see your password. XScreenSaver hacks are X11 programs and run through
 Xwayland.
 
+XScreenSaver hacks don't open windows of their own. They draw (`-window-id`) into a few long-lived,
+invisible windows owned by a small helper process (`windowHost.js`). GNOME 51 keeps the GPU memory of
+every large X window that closes, roughly 25 MB a time, and a fresh window per screensaver added up
+to gigabytes after a day of rotation. Custom commands still open their own windows.
+
 GNOME normally fades to black right after locking, and that fade also tells the power daemon to blank.
 The extension wraps that fade (`ScreenShield._activateFade`): it shows the saver instead, holds an idle
 inhibitor while the saver runs, and when the run time is over it lets the original fade happen.
@@ -73,6 +78,8 @@ inhibitor while the saver runs, and when the run time is over it lets the origin
 | --- | --- |
 | `extension/extension.js` | Lock-screen integration, run timer, idle inhibitor. |
 | `extension/saverSession.js` | Spawns savers, finds their windows, clones them on screen, handles input. |
+| `extension/windowPool.js` | Hands out long-lived windows for the hacks to draw into, so no window closes per screensaver. |
+| `extension/windowHost.js` | The helper process (GJS, Gtk 3 on X11) that owns those windows. |
 | `extension/infoOverlay.js` | Clock/date and now-playing overlay; MPRIS for the media keys. |
 | `extension/history.js` | The optional run log (`~/.local/share/screensavers@yofuness.github.io/history.jsonl`). |
 | `extension/imageConfig.js` | Private `.xscreensaver` for the picture folder; hacks get it through their `HOME`. |

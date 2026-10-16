@@ -15,6 +15,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {ScreenShield} from 'resource:///org/gnome/shell/ui/screenShield.js';
 
 import {SaverSession, killStragglers} from './saverSession.js';
+import {WindowPool} from './windowPool.js';
 import {Registry} from './registry.js';
 import {HistoryWriter} from './history.js';
 import {ImageConfig} from './imageConfig.js';
@@ -53,6 +54,7 @@ export default class ScreensaversExtension extends Extension {
         this._registryReady = this._registry.load().catch(e =>
             console.warn(`[screensavers] scanning screensavers: ${e.message}`));
         this._history = new HistoryWriter(this.uuid);
+        this._pool = new WindowPool(GLib.build_filenamev([this.path, 'windowHost.js']));
         this._session = null;
         this._runs = null;
         this._staggerIds = [];
@@ -111,6 +113,8 @@ export default class ScreensaversExtension extends Extension {
         this._cancelRetrigger();
         this._stopSession({resumeFade: false, reason: 'disabled'});
         killStragglers();
+        this._pool.destroy();
+        this._pool = null;
         this._shield?.disconnectObject(this);
         this._injections?.clear();
         this._injections = null;
@@ -291,6 +295,7 @@ export default class ScreensaversExtension extends Extension {
     _createSession(slots, hidden) {
         const session = new SaverSession({
             slots,
+            pool: this._pool,
             hidden,
             grab: !this._onLock,
             info: {
@@ -322,8 +327,8 @@ export default class ScreensaversExtension extends Extension {
         return session;
     }
 
-    // A picked screensaver that won't start (WebCollage, for one, only draws on
-    // the desktop background) shouldn't end the screensaver: when the source
+    // A picked screensaver that won't start (VidWhacker, for one, exits without
+    // a video to play) shouldn't end the screensaver: when the source
     // picks, try another.  During a skip or rotation the one on screen stays
     // until the replacement shows.  Returns false to give up.
     _retryFailed() {

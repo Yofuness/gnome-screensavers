@@ -396,7 +396,7 @@ scenario_options() {
     stop_saver
     set_key saver-options "'{\"xscreensaver:jigsaw\": {\"delay\": 30000, \"matchDisplay\": true}}'"
     call Preview 'xscreensaver:jigsaw' >/dev/null
-    check_within 6 "match display, OpenGL: no pause on either copy (vsync paces it)" "[ \$(saver_cmdlines $j | grep -c -- '--delay 0\$') -eq 2 ]"
+    check_within 6 "match display, OpenGL: no pause on either copy (vsync paces it)" "[ \$(saver_cmdlines $j | grep -cE -- '--delay 0( |\$)') -eq 2 ]"
     stop_saver
     local c=/usr/lib/xscreensaver/cwaves
     set_key saver-options "'{\"xscreensaver:cwaves\": {\"matchDisplay\": true}}'"
@@ -480,8 +480,8 @@ scenario_options() {
 }
 
 scenario_failures() {
-    echo "== a screensaver that won't start (webcollage) is replaced, not the end"
-    set_key playlists "'[{\"name\": \"Broken first\", \"savers\": [\"xscreensaver:webcollage\", \"xscreensaver:abstractile\"]}, {\"name\": \"Broken middle\", \"savers\": [\"xscreensaver:abstractile\", \"xscreensaver:webcollage\", \"flurry:fire\"]}]'"
+    echo "== a screensaver that won't start (vidwhacker) is replaced, not the end"
+    set_key playlists "'[{\"name\": \"Broken first\", \"savers\": [\"xscreensaver:vidwhacker\", \"xscreensaver:abstractile\"]}, {\"name\": \"Broken middle\", \"savers\": [\"xscreensaver:abstractile\", \"xscreensaver:vidwhacker\", \"flurry:fire\"]}]'"
     set_key shuffle false
     set_key active-playlist "'Broken first'"
     set_key preview-request "'@test#20'"
@@ -499,7 +499,7 @@ scenario_failures() {
     call Key >/dev/null; wait_for 5 clean || true
     set_key active-playlist "''"; set_key playlists "'[]'"; set_key shuffle true
 
-    set_key preview-request "'xscreensaver:webcollage#22'"
+    set_key preview-request "'xscreensaver:vidwhacker#22'"
     check_within 10 "previewing it on its own just ends" "clean"
 }
 
@@ -838,7 +838,45 @@ scenario_preview_button() {
     set_key run-time -1
 }
 
-ALL_SCENARIOS="lock hacks options playlists failures sources images overlay rotation monitors retrigger history preview_button"
+scenario_reuse() {
+    echo "== hacks draw into long-lived host windows (mutter leaks every destroyed or unmapped one)"
+    set_key random true
+    set_key random-pool "'all'"
+    set_key preview-request "'@test#40'"
+    wait_for 8 settled || true
+    call KeyVal 65363 >/dev/null; wait_for 8 settled || true
+    call KeyVal 65363 >/dev/null; wait_for 8 settled || true
+    local early; early=$(host_windows)
+    local i own=0
+    for i in 1 2 3 4 5 6; do
+        call KeyVal 65363 >/dev/null; wait_for 8 settled || true
+        own=$((own + $(call Status | { grep -o '"leased":false' || true; } | wc -l)))
+    done
+    local late; late=$(host_windows)
+    echo "     host windows after 2 skips: $early, after 8: $late"
+    check "skips reuse the host windows instead of opening new ones" "[ $late -eq $early ]"
+    check "at most a few host windows per monitor" "[ $late -le 6 ]"
+    check "every hack drew into a host window" "[ $own -eq 0 ]"
+    call Key >/dev/null; wait_for 5 clean || true
+    set_key random false; set_key random-pool "'favourites'"
+    check "the window host stays running between screensavers" "[ -n \"\$(saver_pids windowHost.js)\" ]"
+    check "host windows aren't in the overview or Alt+Tab" "call Status | grep -q '\"hostListed\":0'"
+
+    DBUS_SESSION_BUS_ADDRESS=$(bus) gnome-extensions disable "$UUID"
+    check_within 5 "disabling the extension ends the window host" "[ -z \"\$(saver_pids windowHost.js)\" ]"
+    DBUS_SESSION_BUS_ADDRESS=$(bus) gnome-extensions enable "$UUID"
+    wait_for 10 "call Status >/dev/null 2>&1" || true
+    set_key preview-request "'xscreensaver:glmatrix#41'"
+    check_within 10 "after enabling again, a hack shows in a new host" "settled && [ \$(host_windows) -ge 1 ]"
+    stop_saver
+}
+
+# How many windows the window host has open.
+host_windows() {
+    { call Status | grep -o '"hostWindows":[0-9]*' || echo :0; } | cut -d: -f2
+}
+
+ALL_SCENARIOS="lock hacks options playlists failures reuse sources images overlay rotation monitors retrigger history preview_button"
 
 run() {
     FAILED=0

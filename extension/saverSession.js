@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // A running screensaver: saver processes shown through live Clutter.Clones of
 // their windows — one process per monitor, or one process mirrored onto every
-// monitor.  Client windows are never painted on the
+// monitor.  XScreenSaver hacks draw into windows leased from a WindowPool.  Client windows are never painted on the
 // lock screen, but a clone of one is, and the saver itself never receives
 // input — the lock screen keeps it.
 
@@ -45,10 +45,13 @@ export function killStragglers() {
 export class SaverSession {
     /**
      * @param {object} params
-     * @param {{monitor: object, id: string, launch: (monitor: object) => {argv: string[], title?: string},
+     * @param {{monitor: object, id: string,
+     *   launch: (monitor: object) => {argv: string[], title?: string, windowed?: boolean},
      *   mirror?: boolean}[]} params.slots
      *   one saver process each: started on `monitor`, and shown on every
-     *   monitor when `mirror` is set
+     *   monitor when `mirror` is set; `windowed` ones get `-window-id` and a
+     *   window from `pool`
+     * @param {import('./windowPool.js').WindowPool|null} params.pool
      * @param {(reason: 'key'|'click') => void} params.onDismiss  called on key press / click
      * @param {() => void} params.onFailed   called when no saver window could be shown
      * @param {() => void} params.onShown    called once the first saver window is on screen
@@ -58,8 +61,9 @@ export class SaverSession {
      * @param {boolean} params.grab          take an input grab (previews on the desktop)
      * @param {{showClock: boolean, showMedia: boolean, scale: number}} params.info
      */
-    constructor({slots, onDismiss, onFailed, onShown, onSkip, skipKeyval, hidden, grab, info}) {
+    constructor({slots, pool, onDismiss, onFailed, onShown, onSkip, skipKeyval, hidden, grab, info}) {
         this._slots = slots;
+        this._pool = pool;
         this._onDismiss = onDismiss;
         this._onFailed = onFailed;
         this._onShown = onShown;
@@ -173,9 +177,49 @@ export class SaverSession {
 
     // Start the saver for one slot.  `pending` entries (a per-monitor swap)
     // fade in over the entry they replace and call onShown once they cover it.
+    // XScreenSaver hacks draw into a window leased from the pool (see
+    // windowPool.js); without one they open their own, as other savers do.
     _spawn(slot, index, {pending = false, onShown = null} = {}) {
         const {monitor, id, launch, mirror} = slot;
-        const {argv, title, env} = launch(monitor);
+        const {argv, title, env, windowed} = launch(monitor);
+        const entry = {
+            index,
+            id,
+            monitor,
+            targets: mirror ? [...Main.layoutManager.monitors] : [monitor],
+            proc: null,
+            pid: 0,
+            lease: null,
+            title,
+            window: null,
+            views: [],
+            pending,
+            onShown,
+        };
+        this._entries.push(entry);
+        if (!windowed || !this._pool) {
+            this._startProcess(entry, argv, env);
+            return;
+        }
+        this._pool.lease(monitor).then(lease => {
+            if (!this._entries.includes(entry)) {
+                lease?.release();
+                return;
+            }
+            entry.lease = lease;
+            if (!lease) {
+                this._startProcess(entry, argv, env);
+                return;
+            }
+            if (!this._startProcess(entry, [...argv, '-window-id', `0x${lease.xid.toString(16)}`], env))
+                return;
+            entry.window = lease.window;
+            this._attachWhenReady(entry, 0);
+        });
+    }
+
+    // Returns false when the program couldn't be started (the entry is gone).
+    _startProcess(entry, argv, env) {
         let proc;
         try {
             const launcher = new Gio.SubprocessLauncher({flags: Gio.SubprocessFlags.NONE});
@@ -184,22 +228,13 @@ export class SaverSession {
             proc = launcher.spawnv(argv);
         } catch (e) {
             console.warn(`[screensavers] failed to start ${argv[0]}: ${e.message}`);
-            return null;
+            this._entries = this._entries.filter(other => other !== entry);
+            entry.lease?.release();
+            entry.lease = null;
+            return false;
         }
-        const entry = {
-            index,
-            id,
-            monitor,
-            targets: mirror ? [...Main.layoutManager.monitors] : [monitor],
-            proc,
-            pid: Number(proc.get_identifier()),
-            title,
-            window: null,
-            views: [],
-            pending,
-            onShown,
-        };
-        this._entries.push(entry);
+        entry.proc = proc;
+        entry.pid = Number(proc.get_identifier());
 
         proc.wait_async(this._cancellable, (_proc, res) => {
             try {
@@ -210,6 +245,8 @@ export class SaverSession {
             }
             this._detach(entry);
             entry.proc = null;
+            entry.lease?.release();
+            entry.lease = null;
             // A replacement that died just goes; the saver it was meant to
             // replace stays on screen.
             if (entry.pending) {
@@ -219,7 +256,7 @@ export class SaverSession {
             if (!this._entries.some(e => e.proc))
                 this._onFailed();
         });
-        return entry;
+        return true;
     }
 
     /**
@@ -249,9 +286,18 @@ export class SaverSession {
     _remove(entry) {
         this._entries = this._entries.filter(e => e !== entry);
         this._detach(entry);
+        this._end(entry);
+    }
+
+    // Stop an entry's process; its leased window goes back to the pool once
+    // the process has exited, so no two hacks ever draw into one window.
+    _end(entry) {
         if (entry.proc)
-            this._terminate(entry.proc);
+            this._terminate(entry.proc, entry.lease);
+        else
+            entry.lease?.release();
         entry.proc = null;
+        entry.lease = null;
     }
 
     /** The saver id shown in each slot (for status and tests). */
@@ -427,8 +473,7 @@ export class SaverSession {
 
         for (const entry of this._entries) {
             this._detach(entry);
-            if (entry.proc)
-                this._terminate(entry.proc);
+            this._end(entry);
         }
         this._entries = [];
         this._infoBox?.destroy();
@@ -440,7 +485,7 @@ export class SaverSession {
     }
 
     // SIGTERM now, SIGKILL if it is still running after the grace period.
-    _terminate(proc) {
+    _terminate(proc, lease) {
         proc.send_signal(SIGTERM);
         const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, KILL_GRACE_MS, () => {
             stragglers.delete(proc);
@@ -449,6 +494,7 @@ export class SaverSession {
         });
         stragglers.set(proc, id);
         proc.wait_async(null, () => {
+            lease?.release();
             if (stragglers.get(proc) === id) {
                 GLib.source_remove(id);
                 stragglers.delete(proc);

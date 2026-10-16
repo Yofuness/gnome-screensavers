@@ -533,7 +533,12 @@ export class Registry {
                 return null;
             const preset = flurry.presets.some(p => p.name === arg) ? arg : 'classic';
             const argv = [flurry.exe, '--preset', preset, ...this._extraArgs(id)];
-            return monitor => ({argv: [...argv, ...this._monitorArgs(id, monitor)], title: flurry.label, env: this._env});
+            return monitor => ({
+                argv: [...argv, ...this._monitorArgs(id, monitor)],
+                title: flurry.label,
+                env: this._env,
+                windowed: true,
+            });
         }
         if (kind === 'xscreensaver') {
             const hack = this._hack(arg);
@@ -541,7 +546,12 @@ export class Registry {
                 return null;
             // With no -root / -window-id a hack opens its own top-level X window.
             const argv = [hack.exe, ...this._extraArgs(id)];
-            return monitor => ({argv: [...argv, ...this._monitorArgs(id, monitor)], title: hack.label, env: this._env});
+            return monitor => ({
+                argv: [...argv, ...this._monitorArgs(id, monitor)],
+                title: hack.label,
+                env: this._env,
+                windowed: true,
+            });
         }
         if (kind === 'custom') {
             const c = this._customs().find(x => x.id === id);

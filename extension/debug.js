@@ -158,6 +158,10 @@ export class DebugInterface {
             outgoing: !!this._ext._outgoing,
             savers: this._ext._session?.ids ?? [],
             media: this._ext._session?.media.current()?.title ?? null,
+            hostWindows: this._ext._pool?.size ?? 0,
+            // Host windows the overview, Alt+Tab or the dash would list.
+            hostListed: global.display.list_all_windows()
+                .filter(w => (w.get_title() ?? '').startsWith('screensavers-host-') && !w.skip_taskbar).length,
             monitors: Main.layoutManager.monitors.map(m => [m.x, m.y, m.width, m.height]),
         });
     }
@@ -200,7 +204,7 @@ export class DebugInterface {
         if (!session)
             return null;
         return session._entries.flatMap(e => {
-            const base = {pid: e.pid, id: e.id, alive: !!e.proc, window: !!e.window};
+            const base = {pid: e.pid, id: e.id, alive: !!e.proc, window: !!e.window, leased: !!e.lease};
             return e.views.length
                 ? e.views.map(v => ({...base, monitor: v.monitor.index, shown: true}))
                 : [{...base, monitor: e.monitor.index, shown: false}];

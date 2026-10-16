@@ -10,9 +10,10 @@ alters a flow, adds state, or adds a design rule.
 | --- | --- | --- | --- |
 | GNOME Shell | `extension.js` | Clutter, Meta, St, Shell, Gio, GLib | GSettings (it reads settings; prefs writes `preview-request`) |
 | Settings window | `prefs.js` | Gtk, Adw, Gdk, Gio, GLib | GSettings, and the history file (read-only) |
+| Window host | `windowHost.js` (`gjs -m`, `GDK_BACKEND=x11`) | Gtk 3, GdkX11, Gio, GLib | stdin/stdout lines with `windowPool.js` in the shell |
 
-Shared modules (`registry.js`, `history.js`) must work in **both** processes, so they import only
-Gio and GLib.
+Shared modules (`registry.js`, `history.js`) must work in both the shell and the settings window,
+so they import only Gio and GLib. Nothing imports `windowHost.js`; the shell only runs it.
 
 ## Modules
 
@@ -27,6 +28,18 @@ Gio and GLib.
   - Shows the info overlay, and swaps the saver on one monitor (`swapSlot`).
   - Knows nothing about settings or history; it reports back through callbacks (`onShown`,
     `onDismiss`, `onFailed`, `onSkip`).
+- **`windowPool.js` + `windowHost.js`, long-lived windows for the hacks.** See "Why hacks draw into
+  pooled windows" below.
+  - `WindowPool` (shell) starts the host on the first lease and owns it until `disable()`.
+  - `lease(monitor)` hands out a free window, opening a new one only when none is free, and makes
+    it fullscreen on that monitor. It resolves to `{xid, window, release()}`, or to null if the
+    host can't provide one; the hack then opens its own window as before.
+  - `release()` (called only once the hack has exited, so two hacks never share a window)
+    unfullscreens the window and shrinks it to 1×1. Windows are never destroyed or unmapped.
+  - `windowHost.js` is a separate process, so it may use Gtk. It creates undecorated,
+    skip-taskbar, fully transparent, click-through windows on request and exits when its stdin
+    closes. Override-redirect windows would avoid the window manager, but mutter doesn't pick up
+    OpenGL frames drawn into them.
 - **`registry.js`, the catalogue and the choosing.**
   - Scans `/usr/share/xscreensaver/config/*.xml` asynchronously and parses each hack's options.
   - Merges in custom commands.
@@ -44,7 +57,8 @@ Gio and GLib.
   - OpenGL hacks (`gl="yes"` in their XML) get an Anti-aliasing select first (`ANTIALIAS_OPTION`:
     default / on / off); "default" follows the `antialias` key. On adds
     `-xrm '*multiSample: true'` (`_antialiasArgs`).
-  - Turns a saver id into a per-monitor launcher (`launch(monitor)` → argv, title, env).
+  - Turns a saver id into a per-monitor launcher (`launch(monitor)` → argv, title, env, and
+    `windowed` for XScreenSaver hacks, Flurry included: those get `-window-id` and a pooled window).
   - Picks what plays (`choose` / `chooseMany`) and owns the shuffle queue and in-order playlist
     position.
   - Also holds the pure helpers prefs uses: playlist import/export and option parsing.
@@ -103,7 +117,7 @@ re-trigger.
    is the outgoing session stopped and logged.
 
 **A screensaver that won't start** (every process exits, or no window within the timeout: e.g.
-WebCollage, which only draws on the desktop background): `onFailed` → `_retryFailed`. When the source
+VidWhacker, which exits without a video to play): `onFailed` → `_retryFailed`. When the source
 picks (`_fixedId` false), it starts another pick, up to `MAX_FAILED_STARTS` in a row; during a
 handover the outgoing session stays on screen meanwhile. A preview of one specific saver, or the
 last failed attempt, ends the run as before (`_stopSession({resumeFade: true})`).
@@ -117,6 +131,20 @@ saver in over the old one on that monitor only.
 2. The shell starts a session with an input grab (on the desktop, keys would otherwise go to the
    focused app).
 
+**Why hacks draw into pooled windows.** With mutter 51, Xwayland 24.1 and Mesa 26.2, every large X
+window that is destroyed or unmapped leaves its GPU buffers behind in gnome-shell, about 20–35 MB
+per 1080p window. This was measured through gnome-shell's DRM fdinfo (`drm-total-system0`) and
+happens with any X client (xeyes, glxgears), not only hacks. With a window per hack, a night of
+5-minute rotation on two monitors held 14.8 GB. Hacks now draw into windows from the pool:
+1. `SaverSession._spawn` leases a window for `windowed` launches.
+2. It starts the hack with `-window-id 0x…` and sets `entry.window` to the leased `Meta.Window`.
+3. It attaches clones as usual. `_fit` is skipped, because the pool already made the window
+   fullscreen.
+
+Process exit, `_remove` and `stop()` release the lease once the process has gone (`_end`,
+`_terminate`). Unmapping leaks too, so idle windows stay mapped, shrunk to one transparent pixel.
+Custom commands still open their own windows.
+
 ## State in extension.js
 
 | Field | Meaning |
@@ -127,6 +155,7 @@ saver in over the old one on that monitor only.
 | `_onLock` / `_test` | what kind of run this is (lock screen, Preview button, or plain preview) |
 | `_fixedId` / `_failedStarts` | whether this run shows one specific saver (no retries), and failed starts in a row |
 | `_pendingFade` | GNOME's fade we took over; resumed when the run time ends |
+| `_pool` | the `WindowPool`, from `enable()` to `disable()` (its host process starts on the first lease) |
 | `_rotateId`, `_staggerIds`, `_runTimerId`, `_noticeTimerId` | timers; all removed in `_stopSession` |
 
 ## Design rules
@@ -154,9 +183,11 @@ These keep it cohesive, so follow them in new code.
      screensavers.
 6. **Live where cheap.** Overlay size, corner and monitor apply to a running screensaver. Things that
    change what's running (source, monitor mode) apply from the next start.
-7. **Never block the shell.** File IO is async; savers are separate processes that get SIGTERM, then a
+7. **Never let a saver's X window close per screensaver.** Each one leaks its GPU buffers in
+   gnome-shell (see above), so XScreenSaver hacks always draw into pooled windows.
+8. **Never block the shell.** File IO is async; savers are separate processes that get SIGTERM, then a
    force kill after 1.5 s.
-8. **Every behaviour has a headless test.** A new flow gets a scenario function in
+9. **Every behaviour has a headless test.** A new flow gets a scenario function in
    `tools/headless-test.sh` (2 monitors, 3840×1080), driven through `debug.js`. Rule 1 is tested
    directly: `Covered` counts the monitors that show an opaque saver, sampled through every kind of
    change.

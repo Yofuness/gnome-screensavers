@@ -10,7 +10,7 @@ page changes, update this file.
 | Rule | How this extension meets it |
 | --- | --- |
 | Nothing created or modified before `enable()`. At import and in the constructor, only static data (`Map`, `RegExp`, constants) is allowed; GObjects (`Gio.Settings`, `St.Widget`, …) are not. | Module scope in `extension.js`, `saverSession.js`, `registry.js` and `infoOverlay.js` holds only constants. `stragglers` in `saverSession.js` is a plain `Map` that `killStragglers()` empties in `disable()`. |
-| Everything `enable()` creates is undone in `disable()`: destroy objects, disconnect signals, remove main-loop sources (even ones that would stop on their own). | `disable()` stops the session, which destroys the actors, removes the input filter and timeouts, and kills the processes. It also cancels the re-trigger watch, disconnects `connectObject` signals and clears the `InjectionManager`. **Every new `GLib.timeout_add` / `idle_add` / `connect` needs a matching removal on the stop path.** |
+| Everything `enable()` creates is undone in `disable()`: destroy objects, disconnect signals, remove main-loop sources (even ones that would stop on their own). | `disable()` stops the session, which destroys the actors, removes the input filter and timeouts, and kills the processes. It also cancels the re-trigger watch, disconnects `connectObject` signals, clears the `InjectionManager` and destroys the `WindowPool` (its `window-created` signal and the window host process). **Every new `GLib.timeout_add` / `idle_add` / `connect` needs a matching removal on the stop path.** |
 | No `GObject.Object.run_dispose()` unless unavoidable, and then with a comment saying why. | Not used. |
 
 ## Imports and code
@@ -18,7 +18,7 @@ page changes, update this file.
 | Rule | How this extension meets it |
 | --- | --- |
 | No deprecated modules: `ByteArray` (use `TextDecoder`), `Lang` (use classes and `bind`), `Mainloop` (use `GLib.timeout_add`). | ESM only; `TextDecoder` for file contents. |
-| No `Gdk`, `Gtk` or `Adw` in the shell process. | Only `prefs.js` imports them. |
+| No `Gdk`, `Gtk` or `Adw` in the shell process. | Only `prefs.js` imports them, and `windowHost.js`, which runs as its own process and is never imported. |
 | No `Clutter`, `Meta`, `St` or `Shell` in prefs. | `prefs.js` and what it imports (`registry.js`, `history.js`) must stay free of them. **Keep shared modules shell-free.** |
 | Readable code: not minified or obfuscated. ESLint is recommended. | `npm run lint` with GNOME's rules; CI runs it. |
 | No excessive logging: only important messages and errors. | Only `console.warn` for real failures (a saver that won't start, a D-Bus error). **No debug logging in shipped code.** |
@@ -45,7 +45,7 @@ For this project that means:
 
 | Rule | How this extension meets it |
 | --- | --- |
-| External scripts and binaries are discouraged; none may be bundled. Spawn processes carefully and make sure they exit. | Only the user's installed XScreenSaver hacks and their own custom commands run, through `Gio.Subprocess`. They get SIGTERM, then a force kill after 1.5 s (`_terminate`), and `killStragglers()` in `disable()`. |
+| External scripts and binaries are strongly discouraged. Binaries and libraries may not be bundled. A script is allowed only where it's unavoidable, and then it must be GJS under an OSI-approved license. Spawn processes carefully and make sure they exit. | The user's installed XScreenSaver hacks and their own custom commands run through `Gio.Subprocess`. They get SIGTERM, then a force kill after 1.5 s (`_terminate`), and `killStragglers()` in `disable()`. The one bundled script is **`windowHost.js`** (GJS, GPL-2.0-or-later). It's unavoidable: the shell can't create X11 windows, and hacks drawing into their own windows made gnome-shell leak GPU memory on every change of screensaver (architecture.md, "Why hacks draw into pooled windows"). It starts on the first screensaver, exits when its stdin closes, and is force-killed in `disable()` (`WindowPool.destroy`). |
 | Privileged subprocesses: avoid them; if one is unavoidable, use `pkexec` on a file the user can't write. | None. (Sonar's ping privileges are left to the user; sonar defaults to simulation mode.) |
 | Installing from pip / npm / … only through explicit user action. | Nothing is installed. `node_modules` is for linting only and is not in the zip. |
 | File IO (project rule, from review feedback): async only in the shell. | `history.js`, `imageConfig.js` and `registry.js` use the `*_async` Gio calls. The extension writes only inside its own data folder (`~/.local/share/<uuid>/`); it never edits the user's `~/.xscreensaver`. |
