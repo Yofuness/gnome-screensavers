@@ -20,6 +20,11 @@ const ATTACH_RETRY_MS = 50;
 const ATTACH_RETRIES = 100;
 const SIGTERM = 15;
 const FADE_MS = 800;
+// A saver counts as shown only once it has kept running this long after
+// fading in.  A hack drawing into a pooled window is on screen before it has
+// proved it works; one that exits straight away (VidWhacker without videos)
+// must leave the saver it was replacing in place.
+const SHOWN_GRACE_MS = 1000;
 
 // Media keys control the current player instead of dismissing the saver.
 const MEDIA_KEYS = new Map([
@@ -73,6 +78,7 @@ export class SaverSession {
         this._wantGrab = grab;
         this._info = info;
         this._entries = [];
+        this._graceIds = new Set();
     }
 
     start() {
@@ -377,7 +383,7 @@ export class SaverSession {
             entry.views.forEach(({box}, i) => box.ease({
                 opacity: 255,
                 duration: FADE_MS,
-                onComplete: i === 0 ? () => shown(entry) : undefined,
+                onComplete: i === 0 ? () => this._afterGrace(entry, () => shown(entry)) : undefined,
             }));
             return;
         }
@@ -388,10 +394,22 @@ export class SaverSession {
             // Fading in over the outgoing saver: it may only go once this one
             // fully covers it, or the lock screen shows through the fade.
             if (this._hidden)
-                this._overlay.ease({opacity: 255, duration: FADE_MS, onComplete: shown});
+                this._overlay.ease({opacity: 255, duration: FADE_MS, onComplete: () => this._afterGrace(entry, shown)});
             else
-                shown();
+                this._afterGrace(entry, shown);
         }
+    }
+
+    // Run `done` once the entry has kept running for SHOWN_GRACE_MS; if its
+    // process exits first, the exit handler deals with it instead.
+    _afterGrace(entry, done) {
+        const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, SHOWN_GRACE_MS, () => {
+            this._graceIds.delete(id);
+            if (entry.proc && this._entries.includes(entry))
+                done();
+            return GLib.SOURCE_REMOVE;
+        });
+        this._graceIds.add(id);
     }
 
     // Place each clone so the window's frame covers its monitor.  On the saver's
@@ -462,6 +480,9 @@ export class SaverSession {
         if (this._skipId)
             GLib.source_remove(this._skipId);
         this._skipId = 0;
+        for (const id of this._graceIds)
+            GLib.source_remove(id);
+        this._graceIds.clear();
         this._cancellable.cancel();
 
         if (this._grab)

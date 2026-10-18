@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-GNOME Shell 51 extension (`screensavers@yofuness.github.io`) that shows XScreenSaver hacks over the
+GNOME Shell 50 and 51 extension (`screensavers@yofuness.github.io`) that shows XScreenSaver hacks over the
 lock screen. See README.md for features, and **[docs/architecture.md](docs/architecture.md) for how
 the modules fit together, the main flows, the state, and the design rules**. Read it before changing
 behaviour, and update it when a change alters a flow, adds state, or adds a rule.
@@ -15,6 +15,10 @@ behaviour, and update it when a change alters a flow, adds state, or adds a rule
   only for checks that something does *not* happen, or that time passes. A new behaviour gets a
   scenario function in `tools/headless-test.sh`; a screen-coverage property is checked with
   `watch_covered` / `covered` (debug `Covered`: monitors showing an opaque saver).
+- `make test-gnome50` runs the same suite against GNOME Shell 50 (Fedora 44 container, Docker; about
+  4 min, plus a few minutes the first time to build the image). **Run it too before committing a
+  change to shell code**: both versions are supported. Hack paths differ (Fedora: `/usr/libexec`), so
+  tests use `$HACK_DIR`.
 - `npm run lint` (run `npm install` first if `@eslint/js` is missing). CI runs it too.
 - `make zip` builds the upload zip; it strips `debug.js`.
 
@@ -38,7 +42,7 @@ behaviour, and update it when a change alters a flow, adds state, or adds a rule
 - Stop the shell with `tools/headless-test.sh stop`. The test shell uses a fake `XDG_SESSION_ID`, so
   it never touches the real logind session.
 
-## GNOME 51 gotchas
+## GNOME 50/51 gotchas
 - Every large X window that closes or unmaps leaks its GPU buffers inside gnome-shell (~20–35 MB each;
   a mutter/Xwayland bug). Hacks therefore draw into long-lived windows from `windowPool.js` via
   `-window-id`; never go back to a window per hack. Measure on the real session with
@@ -77,7 +81,8 @@ behaviour, and update it when a change alters a flow, adds state, or adds a rule
   - everything created in `enable()` (actors, signals, timeouts, idle sources, processes) is undone in
     `disable()`; nothing GObject-based at module scope;
   - no Gtk/Gdk/Adw in shell code; no Clutter/Meta/St/Shell in `prefs.js` or the modules it imports;
-  - no imaginary APIs: check that a GNOME 51 API exists (typelib or docs) before using it;
+  - no imaginary APIs: check that an API exists in **both GNOME 50 and 51** (typelib or docs) before
+    using it; the GNOME 50 container has the 50 typelibs (`/usr/lib64/mutter-18/`);
   - no debug logging; only `console.warn` for real failures;
   - test-only code lives in `debug.js` or between `// BEGIN DEBUG` / `// END DEBUG`, which `make zip`
     strips;

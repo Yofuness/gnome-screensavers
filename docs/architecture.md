@@ -113,8 +113,11 @@ re-trigger.
 **Skip, or a timed change in mirror/same mode: a session-level handover.**
 1. `startSaver({rotate: true})` creates a new *hidden* session (overlay opacity 0) above the old one,
    which becomes `_outgoing`.
-2. When the new one's first window appears, its overlay fades in, and only once the fade has finished
-   is the outgoing session stopped and logged.
+2. When the new one's first window appears, its overlay fades in. The outgoing session is stopped and
+   logged only once the fade has finished **and** the new saver has kept running for
+   `SHOWN_GRACE_MS` (1 s, `SaverSession._afterGrace`). A pooled window is on screen before its hack
+   has proved it works. A hack that exits straight away (VidWhacker without videos) must leave the
+   old saver in place. `swapSlot` waits the same way before removing the saver it replaces.
 
 **A screensaver that won't start** (every process exits, or no window within the timeout: e.g.
 VidWhacker, which exits without a video to play): `onFailed` → `_retryFailed`. When the source

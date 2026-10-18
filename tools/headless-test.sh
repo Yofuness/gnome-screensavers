@@ -23,6 +23,9 @@ T=${SCREENSAVERS_TEST_DIR:-${TMPDIR:-/tmp}/screensavers-test}
 MONITORS=${SCREENSAVERS_TEST_MONITORS:-"1920x1080 1920x1080"}
 # Unix socket paths are limited to 108 bytes, so the runtime dir must be short.
 RUNTIME=/tmp/sstest-$(id -u)
+# Where the hacks are installed (Arch: lib, Fedora: libexec), as registry.js looks.
+HACK_DIR=$(for d in /usr/lib/xscreensaver /usr/libexec/xscreensaver /usr/lib64/xscreensaver; do
+    [ -d "$d" ] && { echo "$d"; break; }; done)
 
 bus() { cat "$T/bus"; }
 
@@ -201,7 +204,7 @@ sys.exit(0 if int((region.min(axis=2) > 200).sum()) > 200 else 1)
 fail() {
     echo "  FAIL $1"
     FAILED=1
-    echo "     saver processes: $(pgrep -a -s "$(cat "$T/pid")" -f /usr/lib/xscreensaver/ | tr '\n' ';' || true)"
+    echo "     saver processes: $(pgrep -a -s "$(cat "$T/pid")" -f $HACK_DIR/ | tr '\n' ';' || true)"
     echo "     status: $(call Status 2>/dev/null || true)"
 }
 
@@ -258,7 +261,7 @@ settled() {
 
 # No session and no saver processes left (the previous scenario is gone).
 clean() {
-    call Status | grep -q '"session":null' && [ -z "$(saver_pids /usr/lib/xscreensaver/)" ]
+    call Status | grep -q '"session":null' && [ -z "$(saver_pids $HACK_DIR/)" ]
 }
 
 stop_saver() {
@@ -299,7 +302,7 @@ expect_animating() {
     check "$1: animating" "[ $diff -gt 1000 ]"
 }
 
-FLURRY='/usr/lib/xscreensaver/flurry --preset'
+FLURRY="$HACK_DIR/flurry --preset"
 # The saver shown now, or "none" (never fails: a failure here would end the run silently).
 saver_now() { call Status | grep -o '"saver":"[^"]*"' || echo none; }
 
@@ -376,7 +379,7 @@ scenario_hacks() {
         check_within 8 "$hack: window shown on both monitors" "[ \$(shown_count) -eq 2 ]"
         expect_animating "$hack"
         call Stop >/dev/null
-        check_within 5 "$hack: processes gone" "[ -z \"\$(saver_pids /usr/lib/xscreensaver/$hack)\" ]"
+        check_within 5 "$hack: processes gone" "[ -z \"\$(saver_pids $HACK_DIR/$hack)\" ]"
         wait_for 4 clean || true
     done
 }
@@ -385,11 +388,11 @@ scenario_options() {
     echo "== per-hack options reach the command line"
     set_key saver-options "'{\"xscreensaver:glmatrix\": {\"density\": 10, \"fog\": false}}'"
     call Preview 'xscreensaver:glmatrix' >/dev/null
-    check_within 6 "glmatrix got --density 10 --no-fog" "saver_cmdlines /usr/lib/xscreensaver/glmatrix | grep -q -- '--density 10 --no-fog'"
+    check_within 6 "glmatrix got --density 10 --no-fog" "saver_cmdlines $HACK_DIR/glmatrix | grep -q -- '--density 10 --no-fog'"
     stop_saver
 
     echo "== frame rate: the slider, or match the display's refresh rate"
-    local j=/usr/lib/xscreensaver/jigsaw d
+    local j=$HACK_DIR/jigsaw d
     set_key saver-options "'{\"xscreensaver:jigsaw\": {\"delay\": 30000}}'"
     call Preview 'xscreensaver:jigsaw' >/dev/null
     check_within 6 "the frame rate slider passes its (inverted) delay" "saver_cmdlines $j | grep -q -- '--delay 70000'"
@@ -398,7 +401,7 @@ scenario_options() {
     call Preview 'xscreensaver:jigsaw' >/dev/null
     check_within 6 "match display, OpenGL: no pause on either copy (vsync paces it)" "[ \$(saver_cmdlines $j | grep -cE -- '--delay 0( |\$)') -eq 2 ]"
     stop_saver
-    local c=/usr/lib/xscreensaver/cwaves
+    local c=$HACK_DIR/cwaves
     set_key saver-options "'{\"xscreensaver:cwaves\": {\"matchDisplay\": true}}'"
     call Preview 'xscreensaver:cwaves' >/dev/null
     check_within 6 "match display, 2D: every monitor's copy gets a pause" "[ \$(saver_cmdlines $c | grep -c -- '--delay') -eq 2 ]"
@@ -410,7 +413,7 @@ scenario_options() {
     set_key saver-options "'{}'"
 
     echo "== anti-aliasing: General default, per-screensaver override, OpenGL only"
-    local g=/usr/lib/xscreensaver/glmatrix aa
+    local g=$HACK_DIR/glmatrix aa
     aa() {
         set_key antialias "$1"; set_key saver-options "'{\"$2\": {$3}}'"
         call Preview "$2" >/dev/null
@@ -428,13 +431,13 @@ scenario_options() {
     aa false xscreensaver:glmatrix "\"antialias\": \"on\"" $g
     check_within 6 "per-screensaver On beats General off" "saver_cmdlines $g | grep -q -- '-xrm \*multiSample: true'"
     stop_saver
-    aa true xscreensaver:abstractile "" /usr/lib/xscreensaver/abstractile
-    check_within 6 "2D screensavers never get it" "[ -n \"\$(saver_pids /usr/lib/xscreensaver/abstractile)\" ] && ! saver_cmdlines /usr/lib/xscreensaver/abstractile | grep -q multiSample"
+    aa true xscreensaver:abstractile "" $HACK_DIR/abstractile
+    check_within 6 "2D screensavers never get it" "[ -n \"\$(saver_pids $HACK_DIR/abstractile)\" ] && ! saver_cmdlines $HACK_DIR/abstractile | grep -q multiSample"
     stop_saver
     set_key antialias true; set_key saver-options "'{}'"
 
     echo "== vermiculate: styles, custom worms and pattern length"
-    local v=/usr/lib/xscreensaver/vermiculate
+    local v=$HACK_DIR/vermiculate
     vermi() {
         set_key saver-options "'{\"xscreensaver:vermiculate\": {$1}}'"
         call Preview 'xscreensaver:vermiculate' >/dev/null
@@ -470,11 +473,11 @@ scenario_options() {
 
     echo "== sonar defaults to simulation (no ping privileges needed)"
     call Preview 'xscreensaver:sonar' >/dev/null
-    check_within 6 "sonar started with --ping simulation" "saver_cmdlines /usr/lib/xscreensaver/sonar | grep -q -- '--ping simulation'"
+    check_within 6 "sonar started with --ping simulation" "saver_cmdlines $HACK_DIR/sonar | grep -q -- '--ping simulation'"
     stop_saver
     set_key saver-options "'{\"xscreensaver:sonar\": {\"ping\": \"sn\"}}'"
     call Preview 'xscreensaver:sonar' >/dev/null
-    check_within 6 "user's choice overrides the default" "saver_cmdlines /usr/lib/xscreensaver/sonar | grep -qv -- '--ping'"
+    check_within 6 "user's choice overrides the default" "saver_cmdlines $HACK_DIR/sonar | grep -qv -- '--ping'"
     stop_saver
     set_key saver-options "'{}'"
 }
@@ -523,7 +526,7 @@ scenario_playlists() {
     check_within 6 "in-order playlist loops back to the start" "call Status | grep -q '\"saver\":\"flurry:fire\"'"
     wait_for 6 settled || true
     call Key >/dev/null
-    check_within 5 "other keys still dismiss" "[ -z \"\$(saver_pids /usr/lib/xscreensaver/)\" ]"
+    check_within 5 "other keys still dismiss" "[ -z \"\$(saver_pids $HACK_DIR/)\" ]"
     check_within 3 "history records the skip" "grep -q '\"ended\":\"skipped\"' '$T/data/$UUID/history.jsonl'"
 
     echo "== shuffled playlist plays everything once before repeating"
@@ -553,7 +556,7 @@ scenario_playlists() {
         [ "$(covered)" -lt 2 ] && mash_gaps=$((mash_gaps + 1))
         sleep 0.05
     done
-    check_within 6 "mashing skip leaves one saver per monitor" "settled && [ \$(shown_count) -eq 2 ] && [ \$(saver_pids /usr/lib/xscreensaver/ | wc -l) -eq 2 ]"
+    check_within 6 "mashing skip leaves one saver per monitor" "settled && [ \$(shown_count) -eq 2 ] && [ \$(saver_pids $HACK_DIR/ | wc -l) -eq 2 ]"
     echo "     samples with a monitor uncovered while mashing: $mash_gaps"
     check "mashing never uncovers a monitor" "[ $mash_gaps -eq 0 ]"
     call Key >/dev/null; wait_for 5 clean || true
@@ -562,7 +565,7 @@ scenario_playlists() {
     set_key skip-key "uint32 0"
     set_key preview-request "'@test#3'"; wait_for 6 settled || true
     call KeyVal 65363 >/dev/null
-    check_within 4 "with no skip key, Right dismisses" "[ -z \"\$(saver_pids /usr/lib/xscreensaver/)\" ]"
+    check_within 4 "with no skip key, Right dismisses" "[ -z \"\$(saver_pids $HACK_DIR/)\" ]"
     set_key skip-key "uint32 65363"
     set_key active-playlist "''"
     set_key playlists "'[]'"
@@ -622,8 +625,8 @@ pb.savev('$pics/sub/spring-green.png', 'png', [], [])"
     check_within 3 "private .xscreensaver points at the folder" "grep -q 'imageDirectory:.*$pics' '$home/.xscreensaver' && grep -q 'chooseRandomImages:.True' '$home/.xscreensaver'"
     check "desktop grabs are off" "grep -q 'grabDesktopImages:.False' '$home/.xscreensaver'"
     call Preview 'xscreensaver:jigsaw' >/dev/null
-    wait_for 6 "[ -n \"\$(saver_pids /usr/lib/xscreensaver/jigsaw)\" ]" || true
-    pid=$(saver_pids /usr/lib/xscreensaver/jigsaw | head -1)
+    wait_for 6 "[ -n \"\$(saver_pids $HACK_DIR/jigsaw)\" ]" || true
+    pid=$(saver_pids $HACK_DIR/jigsaw | head -1)
     check "jigsaw runs with the private HOME" "tr '\\0' '\\n' < /proc/$pid/environ | grep -qx 'HOME=$home'"
     check_within 15 "jigsaw shows a picture from the folder" "shot '$T/shots/jigsaw-picture.png' && [ \$(test_hue_share '$T/shots/jigsaw-picture.png') -gt 100 ]"
     echo "     test colour share: $(test_hue_share "$T/shots/jigsaw-picture.png")/1000"
@@ -740,7 +743,7 @@ scenario_monitors() {
     echo "== multiple monitors: mirrored"
     set_key monitor-mode "'mirror'"
     call Preview 'xscreensaver:abstractile' >/dev/null; wait_for 6 settled || true
-    check "mirrored: one saver process" "[ \$(saver_pids /usr/lib/xscreensaver/ | wc -l) -eq 1 ]"
+    check "mirrored: one saver process" "[ \$(saver_pids $HACK_DIR/ | wc -l) -eq 1 ]"
     check "mirrored: both monitors covered" "[ \$(shown_count) -eq 2 ]"
     # Retried until enough is drawn to compare (abstractile starts nearly black).
     check_within 10 "mirrored: both monitors show the same picture" "shot '$T/shots/mirror.png' && mirror_match '$T/shots/mirror.png'"
@@ -754,7 +757,7 @@ scenario_monitors() {
     local first second
     first=$(savers_json)
     echo "     savers: $first"
-    check "different: two processes" "[ \$(saver_pids /usr/lib/xscreensaver/ | wc -l) -eq 2 ]"
+    check "different: two processes" "[ \$(saver_pids $HACK_DIR/ | wc -l) -eq 2 ]"
     check "different: each monitor its own saver" "python3 -c 'import json,sys; a=json.loads(sys.argv[1]); sys.exit(not (len(a)==2 and a[0]!=a[1]))' '$first'"
     call KeyVal 65363 >/dev/null; sleep 0.5
     check_within 6 "different: still covered after skip" "settled && [ \$(shown_count) -ge 2 ]"

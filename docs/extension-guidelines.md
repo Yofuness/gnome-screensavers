@@ -34,8 +34,9 @@ rejected for:
 - comments that read like LLM prompts.
 
 For this project that means:
-- **Verify every GNOME API exists in GNOME 51** before using it, for example by grepping the typelib
-  with `strings /usr/lib/mutter-51/Meta-51.typelib`. `Clutter.keyval_from_name` and
+- **Verify every GNOME API exists in GNOME 50 and 51** before using it, for example by grepping the
+  typelibs: `strings /usr/lib/mutter-51/Meta-51.typelib` here, and `/usr/lib64/mutter-18/Meta-18.typelib`
+  in the GNOME 50 container (`make test-gnome50`). `Clutter.keyval_from_name` and
   `make_directory_with_parents_async` were both imaginary, and both were caught by the tests.
 - Comments explain *why*, briefly; they never address an assistant.
 - No defensive `try/catch` or code paths that nothing needs.
@@ -65,7 +66,8 @@ For this project that means:
 - `uuid` is `screensavers@yofuness.github.io` (allowed characters only; not a `gnome.org` namespace).
 - No `version` key: extensions.gnome.org sets it. Use `version-name` for our own semver.
 - `shell-version` lists only released stable versions, plus at most one development release. No
-  future versions. (Shexli flags `51`; this is explained in the review notes.)
+  future versions. It lists `50` and `51`; both pass the full test suite (`make test`,
+  `make test-gnome50`). (Shexli flags `51`; this is explained in the review notes.)
 - `url` points to the GitHub repo.
 - `session-modes` lists `user` and `unlock-dialog`; both are needed.
 - No `donations` key unless it's actually used.

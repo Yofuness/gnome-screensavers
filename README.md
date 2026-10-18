@@ -3,7 +3,7 @@
 Run classic **X11 screensavers on GNOME Wayland**, right over the lock screen. GNOME on Wayland has no
 screensaver support, and the XScreenSaver collection (about 250 savers) was written for X11. This
 extension runs those programs unmodified through Xwayland and shows them over the lock screen, whether
-you lock manually (Super+L) or the session auto-locks.
+you lock manually (Super+L) or the session auto-locks. It works on GNOME 50 and 51.
 
 I made this because I love **Flurry**, the screensaver that shipped with macOS. XScreenSaver includes a
 port of the original Flurry source, with all its presets, and it's the default here. Any other
@@ -120,6 +120,10 @@ your real session isn't touched. It then checks that:
 
 It also checks that no monitor is ever left uncovered (lock screen or desktop showing through) during
 skips, mashed skips, rotation and staggered changes.
+
+`make test-gnome50` runs the same suite against GNOME Shell 50, in a Fedora 44 container (needs
+Docker). The container has no systemd, so `tools/gnome50/fake-logind.js` stands in for logind and GDM
+on its system bus, answering like the real ones do for the test shell's made-up session.
 
 Choose which hacks to test with `HACKS="glmatrix pipes" make test`, or run only some scenarios with
 `SCENARIOS="monitors overlay" make test` (scenario names are listed in `tools/headless-test.sh`). The

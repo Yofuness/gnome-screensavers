@@ -34,6 +34,11 @@ uninstall:
 # compiled schema (GNOME compiles schemas itself since 44).
 # The BEGIN DEBUG ... END DEBUG block in extension.js (which loads debug.js) is
 # stripped from the packaged copy too.
+# The same suite against GNOME Shell 50, in a Fedora 44 container (needs Docker).
+test-gnome50: all
+	docker build -q -t screensavers-gnome50 --build-arg UID=$(shell id -u) tools/gnome50
+	docker run --rm -v "$(CURDIR):/work" -e SCENARIOS screensavers-gnome50 tools/headless-test.sh run
+
 zip: all
 	rm -rf build/zip $(UUID).zip
 	cp -r $(BUILD) build/zip
@@ -48,4 +53,4 @@ test: all
 clean:
 	rm -rf build $(UUID).zip
 
-.PHONY: all install uninstall zip test clean
+.PHONY: all install uninstall zip test test-gnome50 clean
