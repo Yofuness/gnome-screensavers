@@ -728,6 +728,10 @@ scenario_rotation() {
     local selected; selected=$(saver_now)
     sleep 12
     check "the selected screensaver still plays after the interval" "[ \"\$(saver_now)\" = '$selected' ] && [ '$selected' != none ]"
+    call KeyVal 65363 >/dev/null
+    sleep 3
+    check "the skip key does nothing for the selected screensaver" "[ \"\$(saver_now)\" = '$selected' ] && call Status | grep -q '\"outgoing\":false'"
+    check "the skip key doesn't dismiss it either" "[ \$(shown_count) -ge 2 ]"
     call Key >/dev/null; wait_for 5 clean || true
     set_key rotate-interval 0
 }

@@ -124,7 +124,8 @@ last failed attempt, ends the run as before (`_stopSession({resumeFade: true})`)
 
 **No timed change for the selected screensaver.** `_rotationSeconds` is 0 when the Source is
 "Selected screensaver" (`sourceOf` in registry.js, shared with prefs, which greys out Change
-screensaver for it). The skip key still moves on to a random pick.
+screensaver for it). The skip key does nothing for it either (`_skip` returns; the key is still
+swallowed, so it doesn't dismiss).
 
 **Timed change in different mode: per-monitor and staggered.** `_staggeredChange` swaps monitor 0
 now, monitor 1 three seconds later, and so on, through `SaverSession.swapSlot`. That fades the new

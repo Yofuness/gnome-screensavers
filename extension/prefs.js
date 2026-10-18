@@ -858,10 +858,15 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
 
     // The key that skips to the next screensaver: click, then press a key.
     _skipKeyRow(settings, window) {
-        const row = new Adw.ActionRow({
-            title: 'Skip key',
-            subtitle: 'Shows the next screensaver from the source. Every other key still dismisses.',
-        });
+        const row = new Adw.ActionRow({title: 'Skip key', subtitle_lines: 0});
+        const syncSubtitle = () => {
+            row.subtitle = sourceOf(settings) === 'selected'
+                ? 'Does nothing while the Source is Selected screensaver. Every other key still dismisses.'
+                : 'Shows the next screensaver from the source. Every other key still dismisses.';
+        };
+        for (const key of ['random', 'active-playlist', 'playlists'])
+            settings.connect(`changed::${key}`, syncSubtitle);
+        syncSubtitle();
         const button = new Gtk.Button({valign: Gtk.Align.CENTER});
         const clear = new Gtk.Button({
             icon_name: 'edit-clear-symbolic',

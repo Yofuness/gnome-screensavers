@@ -369,7 +369,11 @@ export default class ScreensaversExtension extends Extension {
     }
 
     // Next saver now; the rotation timer starts over from here.
+    // The selected screensaver is one screensaver, so the skip key does
+    // nothing for it (it's still swallowed, so it doesn't dismiss).
     _skip() {
+        if (sourceOf(this._settings) === 'selected')
+            return;
         this._cancelStagger();
         if (this._rotateId)
             GLib.source_remove(this._rotateId);
