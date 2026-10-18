@@ -187,6 +187,16 @@ export function readSaverOptions(settings) {
     }
 }
 
+// The current Source: 'selected', 'favourites', 'all' or 'playlist:<name>'.
+export function sourceOf(settings) {
+    const active = settings.get_string('active-playlist');
+    if (active && readPlaylists(settings).some(p => p.name === active))
+        return `playlist:${active}`;
+    if (!settings.get_boolean('random'))
+        return 'selected';
+    return settings.get_string('random-pool') === 'all' ? 'all' : 'favourites';
+}
+
 /** Saved playlists ("playlists"): [{name, savers: [ids]}]. */
 export function readPlaylists(settings) {
     try {

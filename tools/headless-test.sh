@@ -719,9 +719,17 @@ scenario_rotation() {
     check_within 4 "old saver processes gone" "[ -z \"\$(saver_pids '$FLURRY classic')\" ]"
     check "rotation never uncovers a monitor" "[ $gaps -eq 0 ]"
     stop_saver
-    set_key rotate-interval 0
     set_key random false
     set_key favorites "@as []"
+
+    echo "== the selected screensaver never changes on the interval"
+    set_key preview-request "'@test#50'"
+    wait_for 6 settled || true
+    local selected; selected=$(saver_now)
+    sleep 12
+    check "the selected screensaver still plays after the interval" "[ \"\$(saver_now)\" = '$selected' ] && [ '$selected' != none ]"
+    call Key >/dev/null; wait_for 5 clean || true
+    set_key rotate-interval 0
 }
 
 scenario_monitors() {

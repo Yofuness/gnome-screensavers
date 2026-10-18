@@ -16,7 +16,7 @@ import {ScreenShield} from 'resource:///org/gnome/shell/ui/screenShield.js';
 
 import {SaverSession, killStragglers} from './saverSession.js';
 import {WindowPool} from './windowPool.js';
-import {Registry} from './registry.js';
+import {Registry, sourceOf} from './registry.js';
 import {HistoryWriter} from './history.js';
 import {ImageConfig} from './imageConfig.js';
 
@@ -378,7 +378,10 @@ export default class ScreensaversExtension extends Extension {
         this._scheduleRotation();
     }
 
+    // The selected screensaver is one screensaver: nothing to change to.
     _rotationSeconds() {
+        if (sourceOf(this._settings) === 'selected')
+            return 0;
         return this._settings.get_int('rotate-interval') * 60;
     }
 

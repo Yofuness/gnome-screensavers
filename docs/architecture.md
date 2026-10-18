@@ -122,6 +122,10 @@ picks (`_fixedId` false), it starts another pick, up to `MAX_FAILED_STARTS` in a
 handover the outgoing session stays on screen meanwhile. A preview of one specific saver, or the
 last failed attempt, ends the run as before (`_stopSession({resumeFade: true})`).
 
+**No timed change for the selected screensaver.** `_rotationSeconds` is 0 when the Source is
+"Selected screensaver" (`sourceOf` in registry.js, shared with prefs, which greys out Change
+screensaver for it). The skip key still moves on to a random pick.
+
 **Timed change in different mode: per-monitor and staggered.** `_staggeredChange` swaps monitor 0
 now, monitor 1 three seconds later, and so on, through `SaverSession.swapSlot`. That fades the new
 saver in over the old one on that monitor only.

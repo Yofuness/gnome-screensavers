@@ -8,7 +8,7 @@ import Gtk from 'gi://Gtk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 import {
-    Registry, mergePlaylistFile, optionsKey, playlistsToFile, readPlaylists, readSaverOptions,
+    Registry, mergePlaylistFile, optionsKey, playlistsToFile, readPlaylists, readSaverOptions, sourceOf,
 } from './registry.js';
 import {historyFile, parseHistory} from './history.js';
 
@@ -101,15 +101,6 @@ function needsOverlay(settings, row) {
     sync();
 }
 
-// The current Source: 'selected', 'favourites', 'all' or 'playlist:<name>'.
-function sourceOf(settings) {
-    const active = settings.get_string('active-playlist');
-    if (active && readPlaylists(settings).some(p => p.name === active))
-        return `playlist:${active}`;
-    if (!settings.get_boolean('random'))
-        return 'selected';
-    return settings.get_string('random-pool') === 'all' ? 'all' : 'favourites';
-}
 
 const CORNERS = [
     ['top-left', 'Top left'],
@@ -471,13 +462,25 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         selection.add(this._sourceRow(settings, registry));
         selection.add(this._shuffleRow(settings));
 
-        selection.add(choiceRow(settings, 'rotate-interval', 'Change screensaver', [
+        // The selected screensaver is one screensaver, so there's nothing to
+        // change to (the shell ignores the interval for it too).
+        const selected = () => sourceOf(settings) === 'selected';
+        const interval = choiceRow(settings, 'rotate-interval', 'Change screensaver', [
             {value: 0, label: 'Never', explain: () => 'Shows one screensaver the whole time.'},
             ...[1, 2, 5, 10, 15, 30, 60].map(m => ({
                 value: m, label: `Every ${formatDuration(m * 60)}`,
-                explain: () => `Moves on to the next screensaver from the source every ${formatDuration(m * 60)}.`,
+                explain: () => selected()
+                    ? 'The selected screensaver plays the whole time. Choose another Source to change screensavers.'
+                    : `Moves on to the next screensaver from the source every ${formatDuration(m * 60)}.`,
             })),
-        ]));
+        ], [[settings, 'changed::random'], [settings, 'changed::active-playlist'], [settings, 'changed::playlists']]);
+        const syncInterval = () => {
+            interval.sensitive = !selected();
+        };
+        for (const key of ['random', 'active-playlist', 'playlists'])
+            settings.connect(`changed::${key}`, syncInterval);
+        syncInterval();
+        selection.add(interval);
         selection.add(this._skipKeyRow(settings, window));
         selection.add(this._monitorModeRow(settings));
 
