@@ -266,6 +266,26 @@ function parseHackConfig(xml) {
     };
 }
 
+// How to install XScreenSaver's hacks, by distribution: [command, what to do
+// after it], from
+// the text of /etc/os-release and whether the system is image-based
+// (/run/ostree-booted: Silverblue, Bazzite, …), where packages are layered
+// with rpm-ostree and apply after a restart.  null when we don't know.
+export function installCommand(osRelease, ostree) {
+    const field = name => osRelease.match(new RegExp(`^${name}="?([^"\n]*)"?$`, 'm'))?.[1] ?? '';
+    const ids = `${field('ID')} ${field('ID_LIKE')}`.split(/\s+/);
+    const logOut = 'log out and back in';
+    if (ids.includes('fedora') && ostree)
+        return ['rpm-ostree install xscreensaver-extras xscreensaver-gl-extras', 'restart the computer'];
+    if (ids.includes('fedora'))
+        return ['sudo dnf install xscreensaver-extras xscreensaver-gl-extras', logOut];
+    if (ids.includes('arch'))
+        return ['sudo pacman -S xscreensaver', logOut];
+    if (ids.includes('debian') || ids.includes('ubuntu'))
+        return ['sudo apt install xscreensaver-data-extra xscreensaver-gl-extra', logOut];
+    return null;
+}
+
 async function isDirectory(path) {
     try {
         const info = await Gio.File.new_for_path(path).query_info_async(
@@ -375,6 +395,11 @@ export class Registry {
         }
         hacks.sort((a, b) => a.label.localeCompare(b.label));
         this._hacks = hacks;
+    }
+
+    /** Whether any XScreenSaver hack is installed (after load()). */
+    get hasXScreenSaver() {
+        return (this._hacks ?? []).length > 0;
     }
 
     _hack(name) {

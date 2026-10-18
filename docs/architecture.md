@@ -61,7 +61,10 @@ so they import only Gio and GLib. Nothing imports `windowHost.js`; the shell onl
     `windowed` for XScreenSaver hacks, Flurry included: those get `-window-id` and a pooled window).
   - Picks what plays (`choose` / `chooseMany`) and owns the shuffle queue and in-order playlist
     position.
-  - Also holds the pure helpers prefs uses: playlist import/export and option parsing.
+  - Also holds the pure helpers prefs uses: playlist import/export, option parsing, and
+    `installCommand` (the XScreenSaver install command for this distribution, from `/etc/os-release`
+    and `/run/ostree-booted`). `hasXScreenSaver` drives the "isn't installed" banner on General
+    and Library.
 - **`infoOverlay.js`:**
   - `InfoOverlay` draws the clock and now playing in a chosen corner and monitor, with burn-in drift
     and scaling.
@@ -193,8 +196,11 @@ These keep it cohesive, so follow them in new code.
    change what's running (source, monitor mode) apply from the next start.
 7. **Never let a saver's X window close per screensaver.** Each one leaks its GPU buffers in
    gnome-shell (see above), so XScreenSaver hacks always draw into pooled windows.
-8. **Never block the shell.** File IO is async; savers are separate processes that get SIGTERM, then a
-   force kill after 1.5 s.
+8. **Never block the shell.** File IO is async. Savers are separate processes, each started through
+   `setsid` in its own process group (as XScreenSaver does). Stopping one sends SIGTERM to the
+   process and its group, then a force kill after 1.5 s. Once it has exited, SIGKILL goes to the
+   group too, for anything it forked (Map Scroller's tile loader outlived it otherwise). The group
+   signals go through util-linux's `kill` (`signalGroup`), because GLib can't signal a group.
 9. **Every behaviour has a headless test.** A new flow gets a scenario function in
    `tools/headless-test.sh` (2 monitors, 3840×1080), driven through `debug.js`. Rule 1 is tested
    directly: `Covered` counts the monitors that show an opaque saver, sampled through every kind of

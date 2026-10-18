@@ -8,7 +8,8 @@ import Gtk from 'gi://Gtk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 import {
-    Registry, mergePlaylistFile, optionsKey, playlistsToFile, readPlaylists, readSaverOptions, sourceOf,
+    Registry, installCommand, mergePlaylistFile, optionsKey, playlistsToFile, readPlaylists, readSaverOptions,
+    sourceOf,
 } from './registry.js';
 import {historyFile, parseHistory} from './history.js';
 
@@ -119,6 +120,63 @@ const ENDED = {
     failed: ['dialog-warning-symbolic', 'Screensaver failed to start'],
 };
 
+// Read a small system file; null if it doesn't exist or can't be read.
+async function readText(path) {
+    try {
+        const [bytes] = await Gio.File.new_for_path(path).load_contents_async(null);
+        return new TextDecoder().decode(bytes);
+    } catch {
+        return null;
+    }
+}
+
+// Shown when no XScreenSaver hack is installed: only custom screensavers can
+// run, and the Library would be empty.  The button explains how to install
+// them on this distribution.  A group, hidden (no gap) while XScreenSaver is
+// installed.
+function missingGroup(registry, window) {
+    const group = new Adw.PreferencesGroup({visible: false});
+    const banner = new Adw.Banner({
+        title: 'XScreenSaver isn’t installed, so only custom screensavers can run',
+        button_label: 'How to Install',
+        revealed: true,
+    });
+    group.add(banner);
+    registry.load().then(() => {
+        group.visible = !registry.hasXScreenSaver;
+    }).catch(e => console.warn(`[screensavers] ${e.message}`));
+    banner.connect('button-clicked', async () => {
+        const osRelease = await readText('/etc/os-release') ?? '';
+        const ostree = await readText('/run/ostree-booted') !== null;
+        const how = installCommand(osRelease, ostree);
+        const dialog = new Adw.AlertDialog({
+            heading: 'Install XScreenSaver',
+            prefer_wide_layout: true,  // room for the command on one line
+            body: how
+                ? `Flurry and the other screensavers come from XScreenSaver. Run this in a terminal, then ${how[1]}.`
+                : 'Flurry and the other screensavers come from XScreenSaver. Install its screensaver ' +
+                  'programs (the “hacks”, including the OpenGL ones) from your distribution’s ' +
+                  'packages, then log out and back in.',
+        });
+        if (how) {
+            // Read-only, so it can be copied into a terminal.
+            dialog.extra_child = new Gtk.Entry({
+                text: how[0],
+                editable: false,
+                width_chars: how[0].length,
+                css_classes: ['monospace'],
+                margin_top: 6,
+                margin_bottom: 6,
+            });
+        }
+        dialog.add_response('close', 'Close');
+        // Focus Close, not the command: focusing it would select all its text.
+        dialog.default_response = 'close';
+        dialog.present(window);
+    });
+    return group;
+}
+
 export default class ScreensaversPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
@@ -159,6 +217,8 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             title: 'Library',
             icon_name: 'preferences-desktop-screensaver-symbolic',
         });
+
+        page.add(missingGroup(registry, window));
 
         const group = new Adw.PreferencesGroup({
             title: 'Screensavers',
@@ -415,6 +475,8 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
             title: 'General',
             icon_name: 'preferences-system-symbolic',
         });
+
+        page.add(missingGroup(registry, window));
 
         const lock = new Adw.PreferencesGroup({
             title: 'Lock screen',

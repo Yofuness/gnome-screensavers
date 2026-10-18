@@ -46,8 +46,22 @@ XScreenSaver hack, or any program you add yourself, can run instead.
 
 ## Install
 
+First install XScreenSaver's screensaver programs (Flurry and the 3D ones are in the OpenGL package).
+Only the programs are used, never the XScreenSaver daemon.
+
+| System | Command |
+| --- | --- |
+| Arch, EndeavourOS, Manjaro | `sudo pacman -S xscreensaver` |
+| Fedora Workstation | `sudo dnf install xscreensaver-extras xscreensaver-gl-extras` |
+| Bazzite, Silverblue and other image-based Fedora | `rpm-ostree install xscreensaver-extras xscreensaver-gl-extras`, then restart |
+| Debian, Ubuntu, Mint | `sudo apt install xscreensaver-data-extra xscreensaver-gl-extra` |
+
+Install XScreenSaver on the system itself: a copy in a toolbox or distrobox container isn't found. If
+it's missing, the settings window says so and shows the command for your system.
+
+Then install the extension:
+
 ```sh
-sudo pacman -S xscreensaver   # provides Flurry and the other hacks (only the hack programs are used)
 make install                  # installs to ~/.local/share/gnome-shell/extensions
 ```
 

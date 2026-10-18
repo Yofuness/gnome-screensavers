@@ -204,7 +204,7 @@ sys.exit(0 if int((region.min(axis=2) > 200).sum()) > 200 else 1)
 fail() {
     echo "  FAIL $1"
     FAILED=1
-    echo "     saver processes: $(pgrep -a -s "$(cat "$T/pid")" -f $HACK_DIR/ | tr '\n' ';' || true)"
+    echo "     saver processes: $(saver_cmdlines "$HACK_DIR/" | tr '\n' ';')"
     echo "     status: $(call Status 2>/dev/null || true)"
 }
 
@@ -236,14 +236,41 @@ is_locked() {
     call Status | grep -q '"locked":true'
 }
 
-saver_pids() {
-    pgrep -f -s "$(cat "$T/pid")" -- "$1" || true
+# Processes of this test shell's savers.  Each saver runs in its own session
+# (setsid) and what it forks may be re-parented, so match by environment.  A
+# privileged hack's environment can't be read (Sonar has cap_net_raw), but it
+# is a direct child of the test shell.
+test_env() {
+    { tr '\0' '\n' <"/proc/$1/environ"; } 2>/dev/null | grep -qx "XDG_RUNTIME_DIR=$RUNTIME"
 }
 
-# Full command lines of matching processes in the test shell's session only
-# (an unscoped pgrep also matches other shells whose command line mentions it).
+test_shell_pid() {
+    local p
+    for p in $(pgrep -x gnome-shell || true); do
+        test_env "$p" && { echo "$p"; return 0; }
+    done
+    return 0
+}
+
+saver_pids() {
+    local p shell; shell=$(test_shell_pid)
+    for p in $(pgrep -f -- "$1" || true); do
+        if test_env "$p" || { [ -n "$shell" ] && [ "$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')" = "$shell" ]; }; then
+            echo "$p"
+        fi
+    done
+    return 0
+}
+
+# Full command lines of matching processes ("pid command line", like pgrep -a).
+# Written in one go: a reader that stops early (grep -q) must not make this
+# fail with SIGPIPE under pipefail.
 saver_cmdlines() {
-    pgrep -af -s "$(cat "$T/pid")" -- "$1" || true
+    local p out=''
+    for p in $(saver_pids "$1"); do
+        out+="$p $({ tr '\0' ' ' <"/proc/$p/cmdline"; } 2>/dev/null)"$'\n'
+    done
+    printf '%s' "$out"
 }
 
 shown_count() {
@@ -367,7 +394,7 @@ scenario_lock() {
     echo "== a crashing saver removes the overlay"
     call Preview 'flurry:classic' >/dev/null
     wait_for 6 "[ \$(shown_count) -eq 2 ]" || true
-    pkill -KILL -f -s "$(cat "$T/pid")" -- "$FLURRY" || true
+    kill -KILL $(saver_pids "$FLURRY") 2>/dev/null || true
     check_within 4 "session cleared" "call Status | grep -q '\"session\":null'"
 }
 
@@ -891,7 +918,51 @@ host_windows() {
     { call Status | grep -o '"hostWindows":[0-9]*' || echo :0; } | cut -d: -f2
 }
 
-ALL_SCENARIOS="lock hacks options playlists failures reuse sources images overlay rotation monitors retrigger history preview_button"
+scenario_install_help() {
+    echo "== the install command shown when XScreenSaver is missing, per distribution"
+    # A copy: gjs can't import from a path with spaces.
+    mkdir -p "$T/js" && cp "$ROOT"/extension/{registry,hackFixes}.js "$T/js/"
+    cat >"$T/js/cases.js" <<JS
+import {installCommand} from 'file://$T/js/registry.js';
+const ostree = 'rpm-ostree install xscreensaver-extras xscreensaver-gl-extras';
+const dnf = 'sudo dnf install xscreensaver-extras xscreensaver-gl-extras';
+const apt = 'sudo apt install xscreensaver-data-extra xscreensaver-gl-extra';
+const pacman = 'sudo pacman -S xscreensaver';
+const cases = [
+    ['ID=bazzite\nID_LIKE="fedora"\nVARIANT_ID=bazzite-gnome', true, ostree],
+    ['ID=fedora\nVARIANT_ID=silverblue', true, ostree],
+    ['ID=fedora\nVERSION_ID=44', false, dnf],
+    ['ID=arch', false, pacman],
+    ['ID=endeavouros\nID_LIKE=arch', false, pacman],
+    ['ID=ubuntu\nID_LIKE=debian', false, apt],
+    ['ID=linuxmint\nID_LIKE="ubuntu debian"', false, apt],
+    ['ID=debian', false, apt],
+    ['ID=opensuse-tumbleweed\nID_LIKE="opensuse suse"', false, null],
+    ['', false, null],
+];
+for (const [text, image, want] of cases) {
+    const got = installCommand(text, image)?.[0] ?? null;
+    if (got !== want)
+        print(\`\${JSON.stringify(text)} gave \${got}\`);
+}
+JS
+    local wrong; wrong=$(gjs -m "$T/js/cases.js" 2>&1)
+    [ -n "$wrong" ] && echo "     $wrong"
+    check "each distribution gets its own install command" "[ -z \"\$wrong\" ]"
+}
+
+scenario_children() {
+    echo "== stopping a saver also stops what it forked (Map Scroller's tile loader)"
+    local m=$HACK_DIR/mapscroller
+    call Preview 'xscreensaver:mapscroller' >/dev/null
+    check_within 10 "map scroller forked its loader" "[ \$(saver_pids $m | wc -l) -gt 2 ]"
+    echo "     map scroller processes: $(saver_pids $m | wc -l) (2 savers + their loaders)"
+    call Stop >/dev/null
+    check_within 5 "none of its processes are left" "[ -z \"\$(saver_pids $m)\" ]"
+    wait_for 4 clean || true
+}
+
+ALL_SCENARIOS="lock hacks options playlists failures children reuse sources images overlay rotation monitors retrigger history preview_button install_help"
 
 run() {
     FAILED=0

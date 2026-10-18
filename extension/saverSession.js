@@ -34,17 +34,34 @@ const MEDIA_KEYS = new Map([
     [Clutter.KEY_AudioPrev, 'Previous'],
 ]);
 
-// Savers asked to exit but not yet gone, with the timer that force-kills them.
-// Module-level so the extension can clean them up in disable().
+// Savers asked to exit but not yet gone: {id, pid}, with the timer that
+// force-kills them.  Module-level so the extension can clean them up in
+// disable().
 const stragglers = new Map();
 
 /** Force-kill any saver still shutting down and drop its timer. */
 export function killStragglers() {
-    for (const [proc, id] of stragglers) {
+    for (const [proc, {id, pid}] of stragglers) {
         GLib.source_remove(id);
         proc.force_exit();
+        signalGroup(pid, 'KILL');
     }
     stragglers.clear();
+}
+
+// Every saver runs in its own process group (started through `setsid`), as
+// XScreenSaver runs its hacks, so stopping one also stops the processes it
+// forked: Map Scroller's tile loader outlived it otherwise.  GLib can't signal
+// a process group, so util-linux's kill does.  A group that is already gone
+// is not an error.
+function signalGroup(pid, signal) {
+    if (!pid)
+        return;
+    try {
+        Gio.Subprocess.new(['kill', '-s', signal, '--', `-${pid}`], Gio.SubprocessFlags.STDERR_SILENCE);
+    } catch (e) {
+        console.warn(`[screensavers] signalling saver ${pid}: ${e.message}`);
+    }
 }
 
 export class SaverSession {
@@ -231,7 +248,8 @@ export class SaverSession {
             const launcher = new Gio.SubprocessLauncher({flags: Gio.SubprocessFlags.NONE});
             for (const [name, value] of Object.entries(env ?? {}))
                 launcher.setenv(name, value, true);
-            proc = launcher.spawnv(argv);
+            // setsid execs the saver in place (same pid), as a new group.
+            proc = launcher.spawnv(['setsid', ...argv]);
         } catch (e) {
             console.warn(`[screensavers] failed to start ${argv[0]}: ${e.message}`);
             this._entries = this._entries.filter(other => other !== entry);
@@ -251,6 +269,7 @@ export class SaverSession {
             }
             this._detach(entry);
             entry.proc = null;
+            signalGroup(entry.pid, 'KILL');  // anything it forked
             entry.lease?.release();
             entry.lease = null;
             // A replacement that died just goes; the saver it was meant to
@@ -299,7 +318,7 @@ export class SaverSession {
     // the process has exited, so no two hacks ever draw into one window.
     _end(entry) {
         if (entry.proc)
-            this._terminate(entry.proc, entry.lease);
+            this._terminate(entry.proc, entry.pid, entry.lease);
         else
             entry.lease?.release();
         entry.proc = null;
@@ -506,17 +525,22 @@ export class SaverSession {
     }
 
     // SIGTERM now, SIGKILL if it is still running after the grace period.
-    _terminate(proc, lease) {
+    // Its whole process group gets the same, and SIGKILL once the saver is
+    // gone, for whatever it left behind.
+    _terminate(proc, pid, lease) {
         proc.send_signal(SIGTERM);
+        signalGroup(pid, 'TERM');
         const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, KILL_GRACE_MS, () => {
             stragglers.delete(proc);
             proc.force_exit();
+            signalGroup(pid, 'KILL');
             return GLib.SOURCE_REMOVE;
         });
-        stragglers.set(proc, id);
+        stragglers.set(proc, {id, pid});
         proc.wait_async(null, () => {
+            signalGroup(pid, 'KILL');
             lease?.release();
-            if (stragglers.get(proc) === id) {
+            if (stragglers.get(proc)?.id === id) {
                 GLib.source_remove(id);
                 stragglers.delete(proc);
             }
