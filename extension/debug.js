@@ -54,15 +54,6 @@ export class DebugInterface {
             const minutes = extension._rotationSeconds.bind(extension);
             extension._rotationSeconds = () => (minutes() > 0 ? rotateSeconds : 0);
         }
-
-        // Pretend switcheroo-control reported a second GPU with NAME=value.
-        const gpu = GLib.getenv('SCREENSAVERS_TEST_GPU_ENV');
-        if (gpu) {
-            const [name, value] = gpu.split('=');
-            Object.defineProperty(extension, '_gpuEnv', {
-                configurable: true, get: () => ({[name]: value}), set: () => {},
-            });
-        }
     }
 
     destroy() {

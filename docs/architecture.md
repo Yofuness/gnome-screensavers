@@ -73,11 +73,6 @@ so they import only Gio and GLib. Nothing imports `windowHost.js`; the shell onl
   grabs) under `~/.local/share/<uuid>/xscreensaver-home/`. `xscreensaver-getimage` only reads
   `~/.xscreensaver`, so XScreenSaver hacks (not custom commands) are started with `HOME` pointing
   there and the real XDG folders passed through (`Registry` `env`, `SaverSession._spawn`).
-- **`gpu.js`, shell and prefs.** `discreteGpuEnv()` reads switcheroo-control's `GPUs` property
-  (system D-Bus) and returns the non-default GPU's `Environment` (e.g. PRIME offload variables for
-  NVIDIA Optimus), or `null`. The shell watches for switcheroo-control on the system bus (it may start after the shell) and asks each time it appears (watch and query undone in `disable()`); while
-  `discrete-gpu` is on, `Registry` merges it into every saver's environment, custom commands too.
-  Prefs greys the switch out when it's `null`.
 - **`history.js`.** `HistoryWriter` appends JSON lines asynchronously and trims to the limit;
   `parseHistory` reads them for the History page.
 - **`prefs.js`, the settings window.** Pages: General, Playlists, Library, History, Custom. It writes
@@ -171,7 +166,6 @@ Custom commands still open their own windows.
 | `_onLock` / `_test` | what kind of run this is (lock screen, Preview button, or plain preview) |
 | `_fixedId` / `_failedStarts` | whether this run shows one specific saver (no retries), and failed starts in a row |
 | `_pendingFade` | GNOME's fade we took over; resumed when the run time ends |
-| `_gpuEnv` | the discrete GPU's environment from `gpu.js`, or `null` (none, or not answered yet) |
 | `_pool` | the `WindowPool`, from `enable()` to `disable()` (its host process starts on the first lease) |
 | `_rotateId`, `_staggerIds`, `_runTimerId`, `_noticeTimerId` | timers; all removed in `_stopSession` |
 
@@ -219,7 +213,7 @@ These keep it cohesive, so follow them in new code.
 | Lock screen | `enabled-on-lock`, `run-time`, `retrigger-delay` |
 | Selection | `saver`, `random`, `random-pool`, `favorites` (shown as Favourites), `active-playlist`, `shuffle`, `playlists`, `rotate-interval`, `skip-key`, `monitor-mode` |
 | Overlay | `show-clock`, `show-media`, `overlay-scale`, `overlay-corner`, `overlay-monitor` |
-| Graphics | `antialias` (OpenGL hacks; per-hack override in `saver-options`), `discrete-gpu` |
+| Graphics | `antialias` (OpenGL hacks; per-hack override in `saver-options`) |
 | Images | `image-directory` (written to the private `.xscreensaver`) |
 | History | `log-history`, `history-limit` (file: `~/.local/share/<uuid>/history.jsonl`) |
 | Library and custom | `saver-options` (JSON), `custom-savers` |

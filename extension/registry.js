@@ -340,13 +340,10 @@ export class Registry {
      * env: extra environment for XScreenSaver hacks (the shell passes the
      * private HOME from imageConfig.js); custom commands run unchanged.
      * refreshRate: monitor => Hz, for the "Match display refresh rate" option.
-     * gpuEnv: () => environment for the discrete GPU, or null (gpu.js); used
-     * for every saver while the discrete-gpu key is on.
      */
-    constructor(settings, {env = null, refreshRate = () => 60, gpuEnv = () => null} = {}) {
+    constructor(settings, {env = null, refreshRate = () => 60} = {}) {
         this._settings = settings;
-        this._baseEnv = env;
-        this._gpuEnv = gpuEnv;
+        this._env = env;
         this._refreshRate = refreshRate;
         this._hacks = null;
         this._shuffle = {key: null, queue: []};
@@ -489,11 +486,6 @@ export class Registry {
     // at 60 Hz).  OpenGL hacks wait for vsync when they show a frame, so with
     // no pause they run at exactly the refresh rate.  2D hacks have no vsync
     // and would use a whole CPU core without a pause; they get one refresh.
-    _env() {
-        const gpu = this._settings.get_boolean('discrete-gpu') ? this._gpuEnv() : null;
-        return gpu ? {...this._baseEnv, ...gpu} : this._baseEnv;
-    }
-
     _monitorArgs(id, monitor) {
         const delay = this.options(id).find(isFrameDelay);
         if (!delay || !this.values(id)[MATCH_DISPLAY])
@@ -579,7 +571,7 @@ export class Registry {
             return monitor => ({
                 argv: [...argv, ...this._monitorArgs(id, monitor)],
                 title: flurry.label,
-                env: this._env(),
+                env: this._env,
                 windowed: true,
             });
         }
@@ -592,7 +584,7 @@ export class Registry {
             return monitor => ({
                 argv: [...argv, ...this._monitorArgs(id, monitor)],
                 title: hack.label,
-                env: this._env(),
+                env: this._env,
                 windowed: true,
             });
         }
@@ -607,9 +599,7 @@ export class Registry {
                 console.warn(`[screensavers] can't parse custom command "${c.command}": ${e.message}`);
                 return null;
             }
-            const env = this._settings.get_boolean('discrete-gpu') ? this._gpuEnv() : null;
             return monitor => ({
-                env,
                 argv: argv.map(a => a
                     .replaceAll('%w', String(monitor.width))
                     .replaceAll('%h', String(monitor.height))),

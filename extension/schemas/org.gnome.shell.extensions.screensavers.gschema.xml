@@ -76,11 +76,6 @@
       <default>100</default>
       <summary>Size of the clock and now-playing overlay, in percent</summary>
     </key>
-    <key name="discrete-gpu" type="b">
-      <default>false</default>
-      <summary>Render screensavers on the discrete GPU</summary>
-      <description>On laptops with two GPUs (NVIDIA Optimus, AMD hybrid), start screensavers with the environment switcheroo-control gives for the non-default GPU. Has no effect with one GPU.</description>
-    </key>
     <key name="monitor-mode" type="s">
       <choices>
         <choice value="mirror"/>

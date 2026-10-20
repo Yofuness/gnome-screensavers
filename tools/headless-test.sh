@@ -52,7 +52,6 @@ start() {
         SCREENSAVERS_DEBUG=1 GVFS_DISABLE_FUSE=1 \
         XDG_SESSION_ID=screensavers-test-none \
         SCREENSAVERS_TEST_ROTATE_SECONDS=8 \
-        SCREENSAVERS_TEST_GPU_ENV=SCREENSAVERS_FAKE_GPU=1 \
         setsid dbus-run-session -- bash -c '
             echo "$DBUS_SESSION_BUS_ADDRESS" > "'"$T"'/bus"
             dconf write /org/gnome/shell/enabled-extensions "[\"'"$UUID"'\"]"
@@ -410,25 +409,6 @@ scenario_hacks() {
         check_within 5 "$hack: processes gone" "[ -z \"\$(saver_pids $HACK_DIR/$hack)\" ]"
         wait_for 4 clean || true
     done
-}
-
-scenario_gpu() {
-    echo "== discrete GPU: savers get its environment only while the option is on"
-    local f=$HACK_DIR/fireworkx p
-    call Preview 'xscreensaver:fireworkx' >/dev/null
-    check_within 6 "saver started" "[ -n \"\$(saver_pids $f)\" ]"
-    for p in $(saver_pids $f); do
-        check "off: no GPU environment" "! tr '\\0' '\\n' </proc/$p/environ | grep -qx SCREENSAVERS_FAKE_GPU=1"
-    done
-    stop_saver
-    set_key discrete-gpu true
-    call Preview 'xscreensaver:fireworkx' >/dev/null
-    check_within 6 "saver started" "[ -n \"\$(saver_pids $f)\" ]"
-    for p in $(saver_pids $f); do
-        check "on: GPU environment set" "tr '\\0' '\\n' </proc/$p/environ | grep -qx SCREENSAVERS_FAKE_GPU=1"
-    done
-    stop_saver
-    set_key discrete-gpu false
 }
 
 scenario_options() {
@@ -982,7 +962,7 @@ scenario_children() {
     wait_for 4 clean || true
 }
 
-ALL_SCENARIOS="lock hacks options gpu playlists failures children reuse sources images overlay rotation monitors retrigger history preview_button install_help"
+ALL_SCENARIOS="lock hacks options playlists failures children reuse sources images overlay rotation monitors retrigger history preview_button install_help"
 
 run() {
     FAILED=0
