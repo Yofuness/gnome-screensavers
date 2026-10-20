@@ -12,6 +12,7 @@ import {
     sourceOf,
 } from './registry.js';
 import {historyFile, parseHistory} from './history.js';
+import {discreteGpuEnv} from './gpu.js';
 
 Gio._promisify(Gio.File.prototype, 'load_contents_async');
 Gio._promisify(Gio.File.prototype, 'replace_contents_async');
@@ -545,6 +546,7 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         selection.add(interval);
         selection.add(this._skipKeyRow(settings, window));
         selection.add(this._monitorModeRow(settings));
+        selection.add(this._discreteGpuRow(settings));
 
         const overlay = new Adw.PreferencesGroup({
             title: 'Overlay',
@@ -762,6 +764,24 @@ export default class ScreensaversPreferences extends ExtensionPreferences {
         row.add_suffix(value);
         row.add_suffix(scale);
         row.add_suffix(reset);
+        return row;
+    }
+
+    // Greyed out unless switcheroo-control reports a second GPU.
+    _discreteGpuRow(settings) {
+        const row = new Adw.SwitchRow({
+            title: 'Use discrete graphics card',
+            subtitle: 'Checking for a second graphics card…',
+            subtitle_lines: 0,
+            sensitive: false,
+        });
+        settings.bind('discrete-gpu', row, 'active', Gio.SettingsBindFlags.DEFAULT);
+        discreteGpuEnv().then(env => {
+            row.sensitive = env !== null;
+            row.subtitle = env
+                ? 'Faster screensavers on laptops with two graphics cards, at the cost of battery.'
+                : 'No second graphics card found (needs switcheroo-control).';
+        });
         return row;
     }
 

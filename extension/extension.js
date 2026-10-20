@@ -19,6 +19,7 @@ import {WindowPool} from './windowPool.js';
 import {Registry, sourceOf} from './registry.js';
 import {HistoryWriter} from './history.js';
 import {ImageConfig} from './imageConfig.js';
+import {discreteGpuEnv} from './gpu.js';
 
 // Refresh rate (Hz) of the stage view showing a monitor's centre; 0 if unknown
 // (the registry then assumes 60).
@@ -50,7 +51,14 @@ export default class ScreensaversExtension extends Extension {
         this._sessionSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.session'});
         this._images = new ImageConfig(this.uuid);
         this._images.write(this._settings.get_string('image-directory'));
-        this._registry = new Registry(this._settings, {env: this._images.env, refreshRate});
+        this._gpuEnv = null;
+        this._gpuCancellable = new Gio.Cancellable();
+        discreteGpuEnv(this._gpuCancellable).then(env => {
+            this._gpuEnv = env;
+        });
+        this._registry = new Registry(this._settings, {
+            env: this._images.env, refreshRate, gpuEnv: () => this._gpuEnv,
+        });
         this._registryReady = this._registry.load().catch(e =>
             console.warn(`[screensavers] scanning screensavers: ${e.message}`));
         this._history = new HistoryWriter(this.uuid);
@@ -124,6 +132,9 @@ export default class ScreensaversExtension extends Extension {
         this._history = null;
         this._images = null;
         this._registry = null;
+        this._gpuCancellable.cancel();
+        this._gpuCancellable = null;
+        this._gpuEnv = null;
         this._settings = null;
         this._sessionSettings = null;
     }

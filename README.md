@@ -24,6 +24,8 @@ XScreenSaver hack, or any program you add yourself, can run instead.
   they're on.
 - **Anti-aliasing** for 3D (OpenGL) screensavers: on by default; switch it off for all of them on General, and
   overridable per screensaver in its ⚙ settings (some look better without it).
+- **Discrete graphics card** (General): on laptops with two GPUs (NVIDIA Optimus, AMD hybrid),
+  render screensavers on the faster one. Needs `switcheroo-control`; costs battery.
 - **Clock and now playing** in any corner of any monitor (top left of the primary by default),
   resizable from 25% to 200%.
   Media keys (play/pause/next/previous) control your player without stopping the screensaver.
@@ -95,6 +97,7 @@ inhibitor while the saver runs, and when the run time is over it lets the origin
 | `extension/windowPool.js` | Hands out long-lived windows for the hacks to draw into, so no window closes per screensaver. |
 | `extension/windowHost.js` | The helper process (GJS, Gtk 3 on X11) that owns those windows. |
 | `extension/infoOverlay.js` | Clock/date and now-playing overlay; MPRIS for the media keys. |
+| `extension/gpu.js` | Asks switcheroo-control for the discrete GPU's environment (PRIME offload). |
 | `extension/history.js` | The optional run log (`~/.local/share/screensavers@yofuness.github.io/history.jsonl`). |
 | `extension/imageConfig.js` | Private `.xscreensaver` for the picture folder; hacks get it through their `HOME`. |
 | `extension/hackFixes.js` | Per-hack corrections to XScreenSaver's option lists (e.g. Vermiculate's styles and custom worms). |
