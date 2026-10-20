@@ -75,7 +75,7 @@ so they import only Gio and GLib. Nothing imports `windowHost.js`; the shell onl
   there and the real XDG folders passed through (`Registry` `env`, `SaverSession._spawn`).
 - **`gpu.js`, shell and prefs.** `discreteGpuEnv()` reads switcheroo-control's `GPUs` property
   (system D-Bus) and returns the non-default GPU's `Environment` (e.g. PRIME offload variables for
-  NVIDIA Optimus), or `null`. The shell asks once in `enable()` (cancelled in `disable()`); while
+  NVIDIA Optimus), or `null`. The shell watches for switcheroo-control on the system bus (it may start after the shell) and asks each time it appears (watch and query undone in `disable()`); while
   `discrete-gpu` is on, `Registry` merges it into every saver's environment, custom commands too.
   Prefs greys the switch out when it's `null`.
 - **`history.js`.** `HistoryWriter` appends JSON lines asynchronously and trims to the limit;

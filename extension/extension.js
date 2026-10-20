@@ -19,7 +19,7 @@ import {WindowPool} from './windowPool.js';
 import {Registry, sourceOf} from './registry.js';
 import {HistoryWriter} from './history.js';
 import {ImageConfig} from './imageConfig.js';
-import {discreteGpuEnv} from './gpu.js';
+import {GPU_BUS_NAME, discreteGpuEnv} from './gpu.js';
 
 // Refresh rate (Hz) of the stage view showing a monitor's centre; 0 if unknown
 // (the registry then assumes 60).
@@ -51,11 +51,25 @@ export default class ScreensaversExtension extends Extension {
         this._sessionSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.session'});
         this._images = new ImageConfig(this.uuid);
         this._images.write(this._settings.get_string('image-directory'));
+        // switcheroo-control may start after the shell (it isn't D-Bus
+        // activated), so ask whenever it appears on the bus.
         this._gpuEnv = null;
-        this._gpuCancellable = new Gio.Cancellable();
-        discreteGpuEnv(this._gpuCancellable).then(env => {
-            this._gpuEnv = env;
-        });
+        this._gpuCancellable = null;
+        this._gpuWatchId = Gio.bus_watch_name(Gio.BusType.SYSTEM, GPU_BUS_NAME,
+            Gio.BusNameWatcherFlags.NONE,
+            () => {
+                this._gpuCancellable?.cancel();
+                const cancellable = new Gio.Cancellable();
+                this._gpuCancellable = cancellable;
+                discreteGpuEnv(cancellable).then(env => {
+                    if (!cancellable.is_cancelled())
+                        this._gpuEnv = env;
+                });
+            },
+            () => {
+                this._gpuCancellable?.cancel();
+                this._gpuEnv = null;
+            });
         this._registry = new Registry(this._settings, {
             env: this._images.env, refreshRate, gpuEnv: () => this._gpuEnv,
         });
@@ -132,7 +146,8 @@ export default class ScreensaversExtension extends Extension {
         this._history = null;
         this._images = null;
         this._registry = null;
-        this._gpuCancellable.cancel();
+        Gio.bus_unwatch_name(this._gpuWatchId);
+        this._gpuCancellable?.cancel();
         this._gpuCancellable = null;
         this._gpuEnv = null;
         this._settings = null;

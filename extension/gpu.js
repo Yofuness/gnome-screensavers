@@ -7,7 +7,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
-const BUS_NAME = 'net.hadess.SwitcherooControl';
+export const GPU_BUS_NAME = 'net.hadess.SwitcherooControl';
 const OBJECT_PATH = '/net/hadess/SwitcherooControl';
 
 /**
@@ -16,8 +16,8 @@ const OBJECT_PATH = '/net/hadess/SwitcherooControl';
  */
 export function discreteGpuEnv(cancellable = null) {
     return new Promise(resolve => {
-        Gio.DBus.system.call(BUS_NAME, OBJECT_PATH, 'org.freedesktop.DBus.Properties', 'Get',
-            new GLib.Variant('(ss)', [BUS_NAME, 'GPUs']), new GLib.VariantType('(v)'),
+        Gio.DBus.system.call(GPU_BUS_NAME, OBJECT_PATH, 'org.freedesktop.DBus.Properties', 'Get',
+            new GLib.Variant('(ss)', [GPU_BUS_NAME, 'GPUs']), new GLib.VariantType('(v)'),
             Gio.DBusCallFlags.NONE, -1, cancellable, (conn, res) => {
                 try {
                     const [gpus] = conn.call_finish(res).recursiveUnpack();
